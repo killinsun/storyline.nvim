@@ -128,6 +128,29 @@ describe("sidebar のパス短縮", function()
     assert.equals("", sidebar.common_dir_prefix({ "README.md", "apps/a.ts" }))
   end)
 
+  it("ディレクトリツリーを構築し単一子ディレクトリを連結する", function()
+    local tree = sidebar.build_tree({
+      "apps/backend/src/services/foo/a.ts",
+      "apps/backend/src/services/foo/b.ts",
+      "apps/backend/src/services/bar/c.ts",
+      "apps/backend/src/worker/handlers/d.ts",
+      "root.md",
+    })
+    -- ルート直下のファイル
+    assert.equals(1, #tree.files)
+    assert.equals("root.md", tree.files[1].name)
+    -- apps/backend/src までは単一子の連鎖なので1ノードに連結される
+    assert.equals(1, #tree.dirs)
+    assert.equals("apps/backend/src", tree.dirs[1].name)
+    -- その下は services と worker/handlers（後者も連結）に分岐
+    local names = { tree.dirs[1].dirs[1].name, tree.dirs[1].dirs[2].name }
+    assert.same({ "services", "worker/handlers" }, names)
+    -- services の下は bar, foo（名前順）
+    local services = tree.dirs[1].dirs[1]
+    assert.same({ "bar", "foo" }, { services.dirs[1].name, services.dirs[2].name })
+    assert.equals(2, #services.dirs[2].files)
+  end)
+
   it("幅に収まらないパスを pathshorten で短縮する", function()
     assert.equals("short.ts", sidebar.shorten_path("short.ts", 30))
     local long = "services/meeting-task-reports/employee-analysis/prompts/turnover.prompt.ts"

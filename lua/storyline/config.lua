@@ -12,7 +12,10 @@ M.defaults = {
   -- プロンプトに含める diff の1ファイルあたり上限行数
   max_diff_lines_per_file = 400,
   sidebar_width = 36,
-  -- チャプター内の共通ディレクトリを1行に畳み、収まらないパスは a/b/file.ts 形式に短縮
+  -- "tree": GitHub の PR ツリーのようにディレクトリ階層で表示（単一子ディレクトリは連結）
+  -- "flat": パスをそのまま一覧表示
+  sidebar_style = "tree",
+  -- flat 表示時: チャプター内の共通ディレクトリを1行に畳み、収まらないパスを短縮
   shorten_paths = true,
   -- "unified" | "split"
   layout = "unified",

@@ -43,7 +43,9 @@ return {
 
 `j/k` 移動、`h/l` チャプター折畳/展開、`<CR>` チャプター概要 / ファイルを開く、`p` フォーカスを残して開く、`o` 概要フロート、`v` チャプターを Diffview で開く、`m` 読了トグル、`]c` `[c` チャプター移動、`q` 終了。
 
-深い階層のリポジトリでは、チャプター内ファイルの共通ディレクトリを1行に畳み、収まらないパスは `a/b/file.ts` 形式に短縮して表示する（`shorten_paths = false` で無効化）。
+ファイル一覧は GitHub の PR ツリーのように**ディレクトリ階層**で表示する（デフォルト）。単一子ディレクトリの連鎖は `worker/handlers` のように1行へ連結し、ファイル名のステータス（追加=緑 / 削除=赤 / リネーム=黄）と `+N -M` を色付きで表示。nvim-web-devicons があればファイルアイコンも出る。
+
+`sidebar_style = "flat"` でフルパス一覧表示（共通ディレクトリの畳み込み + 短縮つき）に切り替え可能。
 
 ### メインペイン
 
@@ -57,7 +59,8 @@ require("storyline").setup({
   layout = "unified", -- 初期レイアウト
   max_diff_lines_per_file = 400,
   sidebar_width = 36,
-  shorten_paths = true, -- 共通ディレクトリの畳み込みとパス短縮
+  sidebar_style = "tree", -- "tree"（GitHub 風ツリー）| "flat"（パス一覧）
+  shorten_paths = true, -- flat 時の共通ディレクトリ畳み込みとパス短縮
   auto_summary = true,
   keymaps = { toggle_layout = "<leader>gl" },
 })
