@@ -169,4 +169,30 @@ function M.show_base_file(mb, path)
   return run({ "git", "show", mb .. ":" .. path })
 end
 
+local PR_BODY_MAX_CHARS = 2000
+
+--- 現在のブランチに紐づく GitHub PR の title/body を取得する。gh が無い/PR が無いなら nil
+function M.pr_info()
+  if vim.fn.executable("gh") ~= 1 then
+    return nil
+  end
+  local ok, proc = pcall(vim.system, { "gh", "pr", "view", "--json", "title,body" }, { text = true })
+  if not ok then
+    return nil
+  end
+  local result = proc:wait()
+  if result.code ~= 0 then
+    return nil
+  end
+  local decoded_ok, decoded = pcall(vim.json.decode, result.stdout or "")
+  if not decoded_ok or type(decoded) ~= "table" then
+    return nil
+  end
+  local body = decoded.body or ""
+  return {
+    title = decoded.title or "",
+    body = body:sub(1, PR_BODY_MAX_CHARS),
+  }
+end
+
 return M

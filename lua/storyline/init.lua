@@ -38,6 +38,7 @@ local function collect_context(base_input)
     stat = git.diff_stat(mb),
     diff = git.truncated_diff(mb, config.options.max_diff_lines_per_file),
     diff_hash = git.diff_hash(mb),
+    pr = git.pr_info(),
   }
 end
 
@@ -102,13 +103,12 @@ function M.start(opts)
   end
 
   local ai = require("storyline.ai")
+  local spinner = require("storyline.ui.spinner")
   local backend = ai.resolve_backend()
-  vim.notify(
-    "Storyline: AI が変更を解析中..." .. (backend and (" (" .. backend.name .. ")") or ""),
-    vim.log.levels.INFO
-  )
+  spinner.start("Storyline: AI が変更を解析中..." .. (backend and (" (" .. backend.name .. ")") or ""))
 
   ai.analyze(ctx, function(result, err)
+    spinner.stop()
     if result then
       cache.put(key, result)
       open_ui(ctx, result)

@@ -70,7 +70,7 @@ local function on_select()
     return
   end
   if entry.type == "chapter" then
-    s.current_chapter = entry.id
+    story.set_current_chapter(entry.id)
     M.render()
     require("storyline.ui.summary").show(story.chapter(entry.id))
   else
@@ -107,6 +107,12 @@ local function setup_keymaps(buf)
       require("storyline.ui.summary").show(ch)
     end
   end, "チャプター概要を表示")
+  map("v", function()
+    local ch = chapter_at_cursor()
+    if ch then
+      require("storyline.ui.main").open_chapter_in_diffview(ch)
+    end
+  end, "チャプターを Diffview で開く")
   map("m", function()
     local ch = chapter_at_cursor()
     if ch then
@@ -178,7 +184,12 @@ function M.render()
         local f = s.files_by_path[path]
         local opened = s.opened[path] and "•" or " "
         local suffix = f and (" +%d -%d"):format(f.added, f.deleted) or ""
-        local prefix = (f and f.status == "D") and "D " or "  "
+        local prefix = "  "
+        if f and f.status == "D" then
+          prefix = "D "
+        elseif f and f.status == "R" then
+          prefix = "R "
+        end
         add(
           (" %s%s%s%s"):format(opened, prefix, path, suffix),
           { type = "file", path = path, chapter_id = ch.id },

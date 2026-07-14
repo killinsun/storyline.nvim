@@ -175,4 +175,26 @@ function M.toggle_layout()
   vim.notify("Storyline: " .. (M.layout_mode == "split" and "split 表示" or "unified 表示"), vim.log.levels.INFO)
 end
 
+--- diffview.nvim がインストールされていればチャプターの対象ファイルを DiffviewOpen で開く
+--- （未インストール時はエスケープハッチとして警告のみで終了）
+function M.open_chapter_in_diffview(chapter)
+  local ok = pcall(require, "diffview")
+  if not ok then
+    vim.notify("Storyline: diffview.nvim が見つかりません", vim.log.levels.WARN)
+    return
+  end
+
+  local s = story.current
+  if not s or not chapter then
+    return
+  end
+
+  local paths = {}
+  for _, path in ipairs(chapter.files) do
+    table.insert(paths, vim.fn.fnameescape(s.repo_root .. "/" .. path))
+  end
+
+  vim.cmd("DiffviewOpen " .. s.merge_base .. " -- " .. table.concat(paths, " "))
+end
+
 return M

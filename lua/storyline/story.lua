@@ -1,3 +1,5 @@
+local persist = require("storyline.persist")
+
 local M = {}
 
 --- 現在のレビューセッション。nil なら未起動。
@@ -15,6 +17,17 @@ function M.new(data)
     data.files_by_path[f.path] = f
   end
   M.current = data
+
+  -- 同一 HEAD での前回セッションがあれば読了/既読/カレントチャプターを復元する
+  local saved = persist.load(data)
+  if saved then
+    data.read = saved.read
+    data.opened = saved.opened
+    if saved.current_chapter and data.chapters[saved.current_chapter] then
+      data.current_chapter = saved.current_chapter
+    end
+  end
+
   return data
 end
 
@@ -49,26 +62,42 @@ function M.mark_opened(path, auto_read)
   end
   story.opened[path] = true
 
-  if not auto_read then
-    return false
-  end
-  local ch = M.chapter_of(path)
-  if not ch or story.read[ch.id] then
-    return false
-  end
-  for _, p in ipairs(ch.files) do
-    if not story.opened[p] then
-      return false
+  local read_changed = false
+  if auto_read then
+    local ch = M.chapter_of(path)
+    if ch and not story.read[ch.id] then
+      local all_opened = true
+      for _, p in ipairs(ch.files) do
+        if not story.opened[p] then
+          all_opened = false
+          break
+        end
+      end
+      if all_opened then
+        story.read[ch.id] = true
+        read_changed = true
+      end
     end
   end
-  story.read[ch.id] = true
-  return true
+
+  persist.save(story)
+  return read_changed
 end
 
 function M.toggle_read(id)
   local story = M.current
   if story then
     story.read[id] = not story.read[id] or nil
+    persist.save(story)
+  end
+end
+
+--- サイドバーからカレントチャプターを切り替えた際に呼ぶ
+function M.set_current_chapter(id)
+  local story = M.current
+  if story then
+    story.current_chapter = id
+    persist.save(story)
   end
 end
 
