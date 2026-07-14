@@ -1,0 +1,17 @@
+#!/bin/sh
+# AI モック: stdin を読み捨てて固定のチャプター JSON を返す
+cat > /dev/null
+cat <<'JSON'
+{
+  "title": "テスト用のストーリー",
+  "chapters": [
+    {
+      "id": 1,
+      "title": "本体の変更",
+      "summary": "テスト用の固定レスポンスです。",
+      "review_points": ["fake-ai が返す固定値"],
+      "files": ["src/auth/session.ts"]
+    }
+  ]
+}
+JSON
