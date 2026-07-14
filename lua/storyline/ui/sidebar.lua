@@ -1,3 +1,4 @@
+local config = require("storyline.config")
 local story = require("storyline.story")
 local layout = require("storyline.ui.layout")
 
@@ -14,6 +15,48 @@ vim.api.nvim_set_hl(0, "StorylineChapterCurrent", { default = true, link = "Titl
 vim.api.nvim_set_hl(0, "StorylineChapterRead", { default = true, link = "Comment" })
 vim.api.nvim_set_hl(0, "StorylineStat", { default = true, link = "Comment" })
 vim.api.nvim_set_hl(0, "StorylineDeleted", { default = true, link = "DiffDelete" })
+
+--- チャプター内ファイルの共通ディレクトリプレフィックスを求める（テスト可能な純関数）
+--- 1ファイルだけの場合もその親ディレクトリまで畳む
+function M.common_dir_prefix(paths)
+  if #paths == 0 then
+    return ""
+  end
+  local dirs = {}
+  for i, p in ipairs(paths) do
+    dirs[i] = vim.split(p, "/", { plain = true })
+    table.remove(dirs[i]) -- ファイル名は含めない
+  end
+  local prefix = {}
+  local idx = 1
+  while true do
+    local seg = dirs[1][idx]
+    if seg == nil then
+      break
+    end
+    for _, d in ipairs(dirs) do
+      if d[idx] ~= seg then
+        return table.concat(prefix, "/")
+      end
+    end
+    table.insert(prefix, seg)
+    idx = idx + 1
+  end
+  return table.concat(prefix, "/")
+end
+
+--- 表示幅に収まるようパスを短縮する。まず pathshorten（a/b/file.ts）、
+--- それでも長ければファイル名優先で先頭を「…」に切り詰める
+function M.shorten_path(path, max_width)
+  if max_width <= 0 or vim.fn.strdisplaywidth(path) <= max_width then
+    return path
+  end
+  local short = vim.fn.pathshorten(path)
+  if vim.fn.strdisplaywidth(short) <= max_width then
+    return short
+  end
+  return "…" .. vim.fn.strcharpart(short, vim.fn.strchars(short) - (max_width - 1))
+end
 
 --- カーソル行の entry（file 行なら所属チャプターも返す）
 local function entry_at_cursor()
@@ -78,12 +121,16 @@ local function on_select()
   end
 end
 
---- <CR> と違い、ファイルを開いてもフォーカスをサイドバーに残す
+--- <CR> と違い、ファイルを開いてもフォーカスをサイドバーに残す。
+--- フォーカス復帰は gitsigns の非同期レイアウト適用が終わってから main 側が行う。
 local function on_preview()
+  local s = story.current
   local entry = entry_at_cursor()
-  if entry and entry.type == "file" then
-    on_select()
-    layout.focus_sidebar()
+  if not s or not entry then
+    return
+  end
+  if entry.type == "file" then
+    require("storyline.ui.main").open_file(s.files_by_path[entry.path], { keep_focus = "sidebar" })
   else
     on_select()
   end
@@ -147,6 +194,10 @@ function M.attach(win)
   vim.wo[win].relativenumber = false
   vim.wo[win].signcolumn = "no"
   vim.wo[win].cursorline = true
+  -- サイドバーのウィンドウで別バッファが開かれる事故を構造的に防ぐ
+  pcall(function()
+    vim.wo[win].winfixbuf = true
+  end)
   setup_keymaps(M.buf)
 end
 
@@ -180,6 +231,15 @@ function M.render()
     add(("%s %d. %s"):format(icon, ch.id, ch.title), { type = "chapter", id = ch.id }, hl)
 
     if not s.collapsed[ch.id] then
+      local width = config.options.sidebar_width
+      local dir_prefix = config.options.shorten_paths and M.common_dir_prefix(ch.files) or ""
+      if dir_prefix ~= "" then
+        add(
+          "   " .. M.shorten_path(dir_prefix, width - 5) .. "/",
+          { type = "chapter", id = ch.id },
+          "StorylineStat"
+        )
+      end
       for _, path in ipairs(ch.files) do
         local f = s.files_by_path[path]
         local opened = s.opened[path] and "•" or " "
@@ -190,8 +250,12 @@ function M.render()
         elseif f and f.status == "R" then
           prefix = "R "
         end
+        local rel = dir_prefix ~= "" and path:sub(#dir_prefix + 2) or path
+        if config.options.shorten_paths then
+          rel = M.shorten_path(rel, width - 4 - vim.fn.strdisplaywidth(suffix))
+        end
         add(
-          (" %s%s%s%s"):format(opened, prefix, path, suffix),
+          (" %s%s%s%s"):format(opened, prefix, rel, suffix),
           { type = "file", path = path, chapter_id = ch.id },
           (f and f.status == "D") and "StorylineDeleted" or nil
         )

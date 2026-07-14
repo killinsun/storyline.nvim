@@ -109,6 +109,37 @@ describe("ai.analyze (fake-ai との統合)", function()
   end)
 end)
 
+describe("sidebar のパス短縮", function()
+  local sidebar = require("storyline.ui.sidebar")
+
+  it("共通ディレクトリプレフィックスを求める", function()
+    assert.equals(
+      "apps/backend/src/services",
+      sidebar.common_dir_prefix({
+        "apps/backend/src/services/foo/a.ts",
+        "apps/backend/src/services/bar/b.ts",
+      })
+    )
+    -- 1ファイルなら親ディレクトリまで畳む
+    assert.equals("apps/backend", sidebar.common_dir_prefix({ "apps/backend/a.ts" }))
+    -- 共通部分がなければ空
+    assert.equals("", sidebar.common_dir_prefix({ "apps/a.ts", "libs/b.ts" }))
+    -- ルート直下ファイルを含む場合も空
+    assert.equals("", sidebar.common_dir_prefix({ "README.md", "apps/a.ts" }))
+  end)
+
+  it("幅に収まらないパスを pathshorten で短縮する", function()
+    assert.equals("short.ts", sidebar.shorten_path("short.ts", 30))
+    local long = "services/meeting-task-reports/employee-analysis/prompts/turnover.prompt.ts"
+    local shortened = sidebar.shorten_path(long, 40)
+    assert.is_true(vim.fn.strdisplaywidth(shortened) <= 40)
+    assert.is_truthy(shortened:match("turnover%.prompt%.ts$"))
+    -- 極端に狭くてもファイル名の末尾は残る
+    local tiny = sidebar.shorten_path(long, 12)
+    assert.is_true(vim.fn.strdisplaywidth(tiny) <= 12)
+  end)
+end)
+
 describe("git.truncate_diff", function()
   it("ファイルごとに上限行数で丸める", function()
     local lines = {

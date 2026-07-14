@@ -12,6 +12,8 @@ M.defaults = {
   -- プロンプトに含める diff の1ファイルあたり上限行数
   max_diff_lines_per_file = 400,
   sidebar_width = 36,
+  -- チャプター内の共通ディレクトリを1行に畳み、収まらないパスは a/b/file.ts 形式に短縮
+  shorten_paths = true,
   -- "unified" | "split"
   layout = "unified",
   -- チャプター内の全ファイルを開いたら自動で読了マーク

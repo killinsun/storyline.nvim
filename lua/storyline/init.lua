@@ -72,11 +72,20 @@ local function open_ui(ctx, result)
   if first then
     local entry = story.current.files_by_path[first.files[1]]
     if entry then
-      main.open_file(entry)
-    end
-    layout.focus_sidebar()
-    if config.options.auto_summary then
-      summary.show(first)
+      -- gitsigns のレイアウト適用は非同期なので、フォーカス復帰と概要表示は完了後に行う
+      main.open_file(entry, {
+        keep_focus = "sidebar",
+        on_done = function()
+          if config.options.auto_summary then
+            summary.show(first)
+          end
+        end,
+      })
+    else
+      layout.focus_sidebar()
+      if config.options.auto_summary then
+        summary.show(first)
+      end
     end
   else
     layout.focus_sidebar()

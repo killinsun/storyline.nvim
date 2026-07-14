@@ -43,6 +43,8 @@ return {
 
 `j/k` 移動、`h/l` チャプター折畳/展開、`<CR>` チャプター概要 / ファイルを開く、`p` フォーカスを残して開く、`o` 概要フロート、`v` チャプターを Diffview で開く、`m` 読了トグル、`]c` `[c` チャプター移動、`q` 終了。
 
+深い階層のリポジトリでは、チャプター内ファイルの共通ディレクトリを1行に畳み、収まらないパスは `a/b/file.ts` 形式に短縮して表示する（`shorten_paths = false` で無効化）。
+
 ### メインペイン
 
 実ファイルバッファなので LSP ジャンプが通常どおり有効。`<leader>gl` で unified / split 切替（変更可能）。
@@ -55,6 +57,7 @@ require("storyline").setup({
   layout = "unified", -- 初期レイアウト
   max_diff_lines_per_file = 400,
   sidebar_width = 36,
+  shorten_paths = true, -- 共通ディレクトリの畳み込みとパス短縮
   auto_summary = true,
   keymaps = { toggle_layout = "<leader>gl" },
 })

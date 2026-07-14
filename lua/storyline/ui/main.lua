@@ -8,6 +8,8 @@ local M = {
   saved = nil, -- gitsigns のグローバル表示設定の退避先
   mapped_bufs = {},
   current = nil, -- 表示中の file entry
+  busy = false, -- gitsigns の非同期レイアウト適用中
+  queued = nil, -- busy 中に来た open_file 要求（最新のみ保持）
 }
 
 local augroup = vim.api.nvim_create_augroup("storyline_main", { clear = false })
@@ -27,6 +29,8 @@ function M.setup_session()
   M.layout_mode = config.options.layout
   M.current = nil
   M.mapped_bufs = {}
+  M.busy = false
+  M.queued = nil
 
   local ok, gs_config = pcall(function()
     return require("gitsigns.config").config
@@ -39,22 +43,35 @@ function M.setup_session()
     }
   end
 
-  -- gitsigns のアタッチは非同期なので、アタッチ完了後に base を merge-base へ切り替える
+  -- gd ジャンプなどで open_file を経由せず開かれたバッファにも merge-base 基準を適用する。
+  -- GitSignsUpdate は更新のたびに発火するので、base が既に一致していれば何もしない（ループ防止）。
   vim.api.nvim_clear_autocmds({ group = augroup })
   vim.api.nvim_create_autocmd("User", {
     group = augroup,
-    pattern = "GitSignsAttach",
+    pattern = "GitSignsUpdate",
     callback = function(args)
       local s = story.current
-      if not s or M.layout_mode ~= "unified" then
+      if not s or M.layout_mode ~= "unified" or not layout.is_open() then
         return
       end
-      local buf = args.data and args.data.buffer or args.buf
+      local buf = args.data and args.data.buffer
       local g = gs()
-      if g and buf and vim.api.nvim_buf_is_valid(buf) then
-        vim.api.nvim_buf_call(buf, function()
-          pcall(g.change_base, s.merge_base)
-        end)
+      if not g or not buf or not vim.api.nvim_buf_is_valid(buf) then
+        return
+      end
+      local ok, gs_cache = pcall(require, "gitsigns.cache")
+      local bcache = ok and gs_cache.cache[buf] or nil
+      if not bcache or bcache.base == s.merge_base then
+        return
+      end
+      -- storyline タブに表示されているバッファだけを対象にする
+      for _, win in ipairs(vim.api.nvim_tabpage_list_wins(layout.tab)) do
+        if vim.api.nvim_win_get_buf(win) == buf then
+          vim.api.nvim_buf_call(buf, function()
+            pcall(g.change_base, s.merge_base)
+          end)
+          return
+        end
       end
     end,
   })
@@ -82,6 +99,8 @@ function M.teardown()
   M.mapped_bufs = {}
   M.saved = nil
   M.current = nil
+  M.busy = false
+  M.queued = nil
 end
 
 --- split 表示で開いた gitsigns:// の diff ウィンドウを閉じ、diff mode を解除
@@ -99,19 +118,93 @@ local function clear_diff()
   end
 end
 
-local function apply_layout()
+--- レイアウトを適用し、gitsigns の非同期処理が終わってから cb を呼ぶ。
+--- diffthis / change_base は非同期で「実行時点のカレントバッファ」を対象にするため、
+--- 完了までフォーカスを動かしてはいけない（動かすとサイドバーが対象になる）。
+local function apply_layout(cb)
+  local called = false
+  local finish = vim.schedule_wrap(function()
+    if called then
+      return
+    end
+    called = true
+    if cb then
+      cb()
+    end
+  end)
+
   local g = gs()
   local s = story.current
   if not g or not s then
+    finish()
     return
   end
-  if M.layout_mode == "split" then
-    set_unified_toggles(g, false)
-    pcall(g.diffthis, s.merge_base, { vertical = true })
-  else
-    pcall(g.change_base, s.merge_base)
-    set_unified_toggles(g, true)
+
+  -- gitsigns のアタッチも非同期なので、未アタッチのうちに diffthis すると空振りする。
+  -- アタッチ完了をポーリングで待ってから適用する（gitsigns はアタッチ完了の
+  -- User autocmd を発火しないため、キャッシュを直接見るしかない）。
+  local buf = vim.api.nvim_get_current_buf()
+  local function apply()
+    if vim.api.nvim_get_current_buf() ~= buf then
+      -- 待っている間に表示が変わった（連打などで次の open が始まった）
+      finish()
+      return
+    end
+    local ok
+    if M.layout_mode == "split" then
+      set_unified_toggles(g, false)
+      -- unified で change_base(merge_base) 済みのバッファに diffthis(merge_base) すると
+      -- gitsigns 内部の assertion（base == revision なのに compare_text 未計算）を踏む。
+      -- base をリセットしてから diffthis する。
+      ok = pcall(
+        g.change_base,
+        nil,
+        false,
+        vim.schedule_wrap(function()
+          local diff_ok = pcall(g.diffthis, s.merge_base, { vertical = true }, finish)
+          if not diff_ok then
+            finish()
+          end
+        end)
+      )
+    else
+      ok = pcall(g.change_base, s.merge_base, false, finish)
+      set_unified_toggles(g, true)
+    end
+    if not ok then
+      finish()
+    end
   end
+
+  local cache_ok, gs_cache = pcall(require, "gitsigns.cache")
+  if not cache_ok then
+    finish()
+    return
+  end
+  if gs_cache.cache[buf] then
+    apply()
+  else
+    local tries = 0
+    local timer = vim.uv.new_timer()
+    timer:start(
+      50,
+      50,
+      vim.schedule_wrap(function()
+        tries = tries + 1
+        if gs_cache.cache[buf] or tries > 40 then
+          timer:stop()
+          timer:close()
+          if gs_cache.cache[buf] then
+            apply()
+          else
+            finish() -- git 管理外などアタッチされないバッファ
+          end
+        end
+      end)
+    )
+  end
+  -- gitsigns がコールバックを呼ばないケースの最終保険（busy が固着しないように）
+  vim.defer_fn(finish, 4000)
 end
 
 local function attach_keymaps(buf)
@@ -142,35 +235,69 @@ local function open_deleted(entry, merge_base)
   vim.api.nvim_win_set_buf(0, buf)
 end
 
-function M.open_file(entry)
+--- opts:
+---   keep_focus = "sidebar": レイアウト適用完了後にフォーカスをサイドバーへ戻す
+---   on_done = function: レイアウト適用完了後に呼ぶ
+--- 適用完了前に次の open_file が来たらキューに積んで直列化する（p 連打対策）。
+function M.open_file(entry, opts)
+  opts = opts or {}
   local s = story.current
   if not s then
     return
   end
+  if M.busy then
+    M.queued = { entry = entry, opts = opts }
+    return
+  end
+  M.busy = true
+
   layout.focus_main()
   clear_diff()
 
-  if entry.status == "D" then
-    open_deleted(entry, s.merge_base)
-  else
-    vim.cmd.edit(vim.fn.fnameescape(s.repo_root .. "/" .. entry.path))
-    apply_layout()
+  local function finish()
+    M.busy = false
+    -- ユーザーが既に別ウィンドウへ移っていたらフォーカスを奪わない
+    if opts.keep_focus == "sidebar" and vim.api.nvim_get_current_win() == layout.main_win then
+      layout.focus_sidebar()
+    end
+    if opts.on_done then
+      pcall(opts.on_done)
+    end
+    if story.mark_opened(entry.path, config.options.auto_read_mark) then
+      require("storyline.ui.sidebar").render()
+    end
+    local q = M.queued
+    M.queued = nil
+    if q then
+      M.open_file(q.entry, q.opts)
+    end
   end
 
   M.current = entry
-  attach_keymaps(vim.api.nvim_get_current_buf())
 
-  if story.mark_opened(entry.path, config.options.auto_read_mark) then
-    require("storyline.ui.sidebar").render()
+  if entry.status == "D" then
+    open_deleted(entry, s.merge_base)
+    attach_keymaps(vim.api.nvim_get_current_buf())
+    finish()
+  else
+    vim.cmd.edit(vim.fn.fnameescape(s.repo_root .. "/" .. entry.path))
+    attach_keymaps(vim.api.nvim_get_current_buf())
+    apply_layout(finish)
   end
 end
 
 function M.toggle_layout()
+  if M.busy then
+    return
+  end
   M.layout_mode = M.layout_mode == "split" and "unified" or "split"
   if M.current and M.current.status ~= "D" then
+    M.busy = true
     layout.focus_main()
     clear_diff()
-    apply_layout()
+    apply_layout(function()
+      M.busy = false
+    end)
   end
   vim.notify("Storyline: " .. (M.layout_mode == "split" and "split 表示" or "unified 表示"), vim.log.levels.INFO)
 end

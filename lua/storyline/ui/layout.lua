@@ -42,9 +42,26 @@ function M.focus_sidebar()
   end
 end
 
-function M.focus_main()
+--- メインウィンドウを返す。閉じられていたら（gd ジャンプ後の :q など）作り直す
+function M.ensure_main()
   if M.main_win and vim.api.nvim_win_is_valid(M.main_win) then
-    vim.api.nvim_set_current_win(M.main_win)
+    return M.main_win
+  end
+  if not M.is_open() then
+    return nil
+  end
+  local anchor = (M.sidebar_win and vim.api.nvim_win_is_valid(M.sidebar_win)) and M.sidebar_win
+    or vim.api.nvim_tabpage_list_wins(M.tab)[1]
+  vim.api.nvim_set_current_win(anchor)
+  vim.cmd("botright vsplit")
+  M.main_win = vim.api.nvim_get_current_win()
+  return M.main_win
+end
+
+function M.focus_main()
+  local win = M.ensure_main()
+  if win then
+    vim.api.nvim_set_current_win(win)
   end
 end
 
