@@ -29,6 +29,15 @@ local function collect_context(base_input)
     return nil
   end
 
+  -- キャッシュキーは「変更ファイルの集合」に基づく。diff 全文をキーにすると
+  -- レビュー中の1行の編集でも毎回 AI 再解析になってしまうため、
+  -- ファイル集合が同じならチャプター構成を再利用する（内容は R で再解析可能）。
+  local paths = {}
+  for _, f in ipairs(files) do
+    table.insert(paths, f.path)
+  end
+  table.sort(paths)
+
   return {
     repo_root = git.repo_root(),
     base_ref = base,
@@ -37,7 +46,7 @@ local function collect_context(base_input)
     files = files,
     stat = git.diff_stat(mb),
     diff = git.truncated_diff(mb, config.options.max_diff_lines_per_file),
-    diff_hash = git.diff_hash(mb),
+    files_hash = vim.fn.sha256(table.concat(paths, "\n")),
     pr = git.pr_info(),
   }
 end
@@ -101,13 +110,17 @@ function M.start(opts)
   end
 
   local cache = require("storyline.cache")
-  local key = cache.key({ ctx.repo_root, ctx.merge_base, ctx.head_sha, ctx.diff_hash })
+  local key = cache.key({ ctx.repo_root, ctx.merge_base, ctx.head_sha, ctx.files_hash })
 
   if not opts.no_cache then
     local cached = cache.get(key)
     if cached and cached.chapters then
-      open_ui(ctx, cached)
-      return
+      -- 現在のファイル集合と突き合わせて正規化（stale なパスの除去・追加分の救済）
+      local reconciled = require("storyline.ai.schema").validate(cached, ctx.files)
+      if reconciled then
+        open_ui(ctx, reconciled)
+        return
+      end
     end
   end
 
