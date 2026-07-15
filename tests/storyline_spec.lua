@@ -109,6 +109,45 @@ describe("ai.analyze (fake-ai との統合)", function()
   end)
 end)
 
+describe("ai.ask (fake-ai との統合)", function()
+  local config = require("storyline.config")
+
+  -- テスト後に config をデフォルトへ戻す
+  after_each(function()
+    config.setup({})
+  end)
+
+  it("fake-ai の出力を自由テキストの回答として返す", function()
+    local spec_dir = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h")
+    local fake_ai = spec_dir .. "/fixtures/fake-ai"
+
+    config.setup({
+      backend = "claude",
+      backends = {
+        claude = { cmd = "sh", args = { fake_ai } },
+      },
+    })
+
+    local ai = require("storyline.ai")
+
+    local done, text, err
+    ai.ask("このチャプターについて教えてください", function(t, e)
+      text = t
+      err = e
+      done = true
+    end)
+
+    vim.wait(5000, function()
+      return done
+    end)
+
+    assert.is_true(done)
+    assert.is_nil(err)
+    assert.is_not_nil(text)
+    assert.is_true(#text > 0)
+  end)
+end)
+
 describe("sidebar のパス短縮", function()
   local sidebar = require("storyline.ui.sidebar")
 

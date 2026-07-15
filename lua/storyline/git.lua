@@ -164,6 +164,14 @@ function M.truncated_diff(mb, max_lines)
   return table.concat(M.truncate_diff(M.full_diff_lines(mb), max_lines), "\n")
 end
 
+--- 指定ファイルのみの diff を取得し、1ファイルあたり max_lines 行に丸めて文字列で返す
+function M.files_diff(mb, paths, max_lines)
+  local args = { "git", "diff", "-M", mb, "--" }
+  vim.list_extend(args, paths)
+  local lines = run(args) or {}
+  return table.concat(M.truncate_diff(lines, max_lines), "\n")
+end
+
 --- 削除ファイル表示用: base 時点のファイル内容
 function M.show_base_file(mb, path)
   return run({ "git", "show", mb .. ":" .. path })

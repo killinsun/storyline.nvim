@@ -62,4 +62,51 @@ function M.build(ctx)
   return table.concat(parts, "\n")
 end
 
+--- args: { story_title, base_ref, chapter = {title, summary, review_points, files}, diff, question }
+--- JSON 指定はしない自由テキスト回答用のプロンプト
+function M.build_question(args)
+  local ch = args.chapter
+
+  local parts = {
+    [[あなたはコードレビューを支援する AI です。
+以下の PR チャプターの変更内容を踏まえて質問に日本語で簡潔に答えてください。]],
+    "",
+    "# PR",
+    args.story_title or "",
+    ("base: %s"):format(args.base_ref or ""),
+    "",
+    "# チャプター",
+    ch.title or "",
+  }
+
+  if ch.summary and ch.summary ~= "" then
+    table.insert(parts, ch.summary)
+  end
+
+  if ch.review_points and #ch.review_points > 0 then
+    table.insert(parts, "")
+    table.insert(parts, "読むポイント:")
+    for _, point in ipairs(ch.review_points) do
+      table.insert(parts, "- " .. point)
+    end
+  end
+
+  table.insert(parts, "")
+  table.insert(parts, "対象ファイル:")
+  for _, f in ipairs(ch.files or {}) do
+    table.insert(parts, "- " .. f)
+  end
+
+  vim.list_extend(parts, {
+    "",
+    "# diff",
+    args.diff,
+    "",
+    "# 質問",
+    args.question,
+  })
+
+  return table.concat(parts, "\n")
+end
+
 return M

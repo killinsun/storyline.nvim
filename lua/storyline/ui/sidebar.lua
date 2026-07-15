@@ -1,6 +1,11 @@
 local config = require("storyline.config")
 local story = require("storyline.story")
 local layout = require("storyline.ui.layout")
+local git = require("storyline.git")
+local ai = require("storyline.ai")
+local prompt = require("storyline.ai.prompt")
+local spinner = require("storyline.ui.spinner")
+local answer = require("storyline.ui.answer")
 
 local M = {
   buf = nil,
@@ -212,6 +217,41 @@ local function on_preview()
   end
 end
 
+--- カーソル位置のチャプターについて質問を受け付け、AI に問い合わせて回答をフロート表示する
+local function ask_chapter()
+  local s = story.current
+  local ch = chapter_at_cursor()
+  if not s or not ch then
+    return
+  end
+  vim.ui.input({ prompt = "Storyline 質問: " }, function(question)
+    if not question or vim.trim(question) == "" then
+      return
+    end
+    local diff = git.files_diff(s.merge_base, ch.files, config.options.max_diff_lines_per_file)
+    local payload = prompt.build_question({
+      story_title = s.title,
+      base_ref = s.base_ref,
+      chapter = ch,
+      diff = diff,
+      question = question,
+    })
+
+    local backend = ai.resolve_backend()
+    -- 多バイト文字の途中で切らないよう文字数単位で丸める
+    local label = vim.fn.strcharpart(question, 0, 20) .. (backend and (" (" .. backend.label .. ")") or "")
+    spinner.start(label)
+    ai.ask(payload, function(text, err)
+      spinner.stop()
+      if not text then
+        vim.notify("Storyline: " .. (err or "質問に失敗しました"), vim.log.levels.WARN)
+        return
+      end
+      answer.show(question, text)
+    end)
+  end)
+end
+
 local function setup_keymaps(buf)
   local function map(lhs, rhs, desc)
     vim.keymap.set("n", lhs, rhs, { buffer = buf, nowait = true, desc = "Storyline: " .. desc })
@@ -243,6 +283,7 @@ local function setup_keymaps(buf)
       M.render()
     end
   end, "読了マークをトグル")
+  map("a", ask_chapter, "チャプターについて LLM に質問")
   map("]c", function()
     jump_chapter(1)
   end, "次のチャプターへ")

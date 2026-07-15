@@ -124,6 +124,37 @@ function M.analyze(ctx, cb)
   end)
 end
 
+--- チャプターについての質問に自由テキストで回答させる（完全非同期、リトライなし）
+--- payload はそのまま stdin に渡すプロンプト文字列。cb(answer, err) はメインループで呼ばれる。answer == nil ならエラー。
+function M.ask(payload, cb)
+  local backend = M.resolve_backend()
+  if not backend then
+    cb(nil, "利用可能な AI バックエンドがありません（backend = " .. config.options.backend .. "）")
+    return
+  end
+
+  local cfg = backend_cfg(backend.name)
+  local ok = pcall(vim.system, backend.build_cmd(cfg), {
+    text = true,
+    stdin = payload,
+    timeout = config.options.timeout_ms,
+  }, function(result)
+    vim.schedule(function()
+      if result.code ~= 0 then
+        local err = vim.trim(result.stderr or "")
+        cb(nil, backend.name .. " が異常終了しました (code=" .. result.code .. ") " .. err:sub(1, 200))
+        return
+      end
+      cb(vim.trim(result.stdout or ""))
+    end)
+  end)
+  if not ok then
+    vim.schedule(function()
+      cb(nil, "コマンドを実行できません: " .. cfg.cmd)
+    end)
+  end
+end
+
 M.fallback = schema.fallback
 
 return M
