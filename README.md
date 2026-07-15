@@ -63,6 +63,15 @@ require("storyline").setup({
   shorten_paths = true, -- flat 時の共通ディレクトリ畳み込みとパス短縮
   auto_summary = true,
   keymaps = { toggle_layout = "<leader>gl" },
+  prompts = {
+    -- チャプター分解プロンプトへの追加指示
+    analyze_extra = "チャプター名は英語で書く",
+    -- チャプター質問（a キー）への追加指示
+    ask_extra = "回答は箇条書きで",
+    -- プロンプト全体の差し替え（上級者向け。analyze は JSON スキーマ指示も自前で含めること）
+    -- build_analyze = function(ctx) return "..." end,   -- ctx: { files, stat, diff, pr }
+    -- build_question = function(args) return "..." end, -- args: { story_title, base_ref, chapter, diff, question }
+  },
 })
 ```
 

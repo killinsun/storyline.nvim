@@ -148,6 +148,55 @@ describe("ai.ask (fake-ai との統合)", function()
   end)
 end)
 
+describe("プロンプトのカスタマイズ", function()
+  local config = require("storyline.config")
+  local prompt = require("storyline.ai.prompt")
+  local ctx = { files = FILES, stat = "", diff = "" }
+
+  after_each(function()
+    config.setup({})
+  end)
+
+  it("analyze_extra が追加の指示として入る", function()
+    config.setup({ prompts = { analyze_extra = "チャプター名は英語で書く" } })
+    local p = prompt.build(ctx)
+    assert.is_truthy(p:find("# 追加の指示", 1, true))
+    assert.is_truthy(p:find("チャプター名は英語で書く", 1, true))
+    -- JSON スキーマ指示は維持される
+    assert.is_truthy(p:find('"chapters"', 1, true))
+  end)
+
+  it("ask_extra が質問プロンプトに入る", function()
+    config.setup({ prompts = { ask_extra = "回答は箇条書きで" } })
+    local p = prompt.build_question({
+      story_title = "t",
+      base_ref = "main",
+      chapter = { title = "ch", files = {} },
+      diff = "",
+      question = "why?",
+    })
+    assert.is_truthy(p:find("回答は箇条書きで", 1, true))
+  end)
+
+  it("build_analyze / build_question で全体を差し替えられる", function()
+    config.setup({
+      prompts = {
+        build_analyze = function(c)
+          return "CUSTOM_ANALYZE:" .. #c.files
+        end,
+        build_question = function(a)
+          return "CUSTOM_Q:" .. a.question
+        end,
+      },
+    })
+    assert.equals("CUSTOM_ANALYZE:3", prompt.build(ctx))
+    assert.equals(
+      "CUSTOM_Q:why?",
+      prompt.build_question({ chapter = { files = {} }, diff = "", question = "why?" })
+    )
+  end)
+end)
+
 describe("sidebar のパス短縮", function()
   local sidebar = require("storyline.ui.sidebar")
 

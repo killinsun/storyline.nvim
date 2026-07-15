@@ -28,6 +28,21 @@ M.defaults = {
     -- サイドバー: フォーカスを残したままファイルを開く
     preview = "<Tab>",
   },
+  -- プロンプトのカスタマイズ
+  prompts = {
+    -- チャプター分解プロンプトに「追加の指示」として追記する文字列
+    -- 例: "チャプター名は英語で書く" / "テストは実装と同じチャプターに入れる"
+    analyze_extra = "",
+    -- チャプター質問（サイドバー a）プロンプトへの追記
+    ask_extra = "",
+    -- プロンプト全体を差し替える関数（上級者向け）。
+    -- build_analyze = function(ctx) ... return string end
+    --   ctx: { files, stat, diff, pr }。出力 JSON スキーマの指示も自前で含めること。
+    -- build_question = function(args) ... return string end
+    --   args: { story_title, base_ref, chapter, diff, question }
+    build_analyze = nil,
+    build_question = nil,
+  },
 }
 
 M.options = vim.deepcopy(M.defaults)

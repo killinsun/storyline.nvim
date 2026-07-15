@@ -1,3 +1,5 @@
+local config = require("storyline.config")
+
 local M = {}
 
 M.retry_suffix = [[
@@ -5,8 +7,17 @@ M.retry_suffix = [[
 前回の出力は JSON として解釈できませんでした。
 コードフェンス・前置き・補足説明を一切付けず、指定したスキーマの JSON オブジェクトのみを出力し直してください。]]
 
+local function prompts_config()
+  return config.options.prompts or {}
+end
+
 --- ctx: { files = { {path, status, added, deleted} }, stat = string, diff = string, pr?: {title, body} }
 function M.build(ctx)
+  local prompts = prompts_config()
+  if prompts.build_analyze then
+    return prompts.build_analyze(ctx)
+  end
+
   local file_lines = {}
   for _, f in ipairs(ctx.files) do
     table.insert(file_lines, string.format("- %s (%s, +%d -%d)", f.path, f.status, f.added, f.deleted))
@@ -39,6 +50,12 @@ function M.build(ctx)
     "",
   }
 
+  if prompts.analyze_extra and prompts.analyze_extra ~= "" then
+    table.insert(parts, "# 追加の指示")
+    table.insert(parts, prompts.analyze_extra)
+    table.insert(parts, "")
+  end
+
   if ctx.pr then
     table.insert(parts, "# PR タイトル")
     table.insert(parts, ctx.pr.title or "")
@@ -65,12 +82,17 @@ end
 --- args: { story_title, base_ref, chapter = {title, summary, review_points, files}, diff, question }
 --- JSON 指定はしない自由テキスト回答用のプロンプト
 function M.build_question(args)
+  local prompts = prompts_config()
+  if prompts.build_question then
+    return prompts.build_question(args)
+  end
+
   local ch = args.chapter
 
   local parts = {
     [[あなたはコードレビューを支援する AI です。
 以下の PR チャプターの変更内容を踏まえて質問に日本語で簡潔に答えてください。]],
-    "",
+    prompts.ask_extra and prompts.ask_extra ~= "" and (prompts.ask_extra .. "\n") or "",
     "# PR",
     args.story_title or "",
     ("base: %s"):format(args.base_ref or ""),
