@@ -217,7 +217,7 @@ local function setup_keymaps(buf)
     vim.keymap.set("n", lhs, rhs, { buffer = buf, nowait = true, desc = "Storyline: " .. desc })
   end
   map("<CR>", on_select, "チャプター概要 / ファイルを開く")
-  map("p", on_preview, "フォーカスを残したままファイルを開く")
+  map(config.options.keymaps.preview, on_preview, "フォーカスを残したままファイルを開く")
   map("h", function()
     set_collapsed(true)
   end, "チャプターを折り畳む")

@@ -25,6 +25,8 @@ M.defaults = {
   auto_summary = true,
   keymaps = {
     toggle_layout = "<leader>gl",
+    -- サイドバー: フォーカスを残したままファイルを開く
+    preview = "<Tab>",
   },
 }
 
