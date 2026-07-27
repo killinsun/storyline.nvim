@@ -67,11 +67,8 @@ function M.setup_session()
       word_diff = gs_config.word_diff,
       diff_opts = vim.deepcopy(gs_config.diff_opts or {}),
     }
-    gs_config.diff_opts = vim.tbl_deep_extend(
-      "force",
-      vim.deepcopy(gs_config.diff_opts or {}),
-      config.options.unified.diff_opts
-    )
+    gs_config.diff_opts =
+      vim.tbl_deep_extend("force", vim.deepcopy(gs_config.diff_opts or {}), config.options.unified.diff_opts)
   end
 
   -- gd ジャンプなどで open_file を経由せず開かれたバッファにも merge-base 基準を適用する。

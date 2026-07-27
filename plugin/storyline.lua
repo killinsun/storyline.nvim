@@ -3,9 +3,17 @@ if vim.g.loaded_storyline then
 end
 vim.g.loaded_storyline = 1
 
-vim.api.nvim_create_user_command("Storyline", function(cmd)
-  require("storyline").start({ base = cmd.args ~= "" and cmd.args or nil })
-end, { nargs = "?", complete = "customlist,v:lua.require'storyline.git'.complete_branches", desc = "ストーリーモードレビューを開始" })
+vim.api.nvim_create_user_command(
+  "Storyline",
+  function(cmd)
+    require("storyline").start({ base = cmd.args ~= "" and cmd.args or nil })
+  end,
+  {
+    nargs = "?",
+    complete = "customlist,v:lua.require'storyline.git'.complete_branches",
+    desc = "ストーリーモードレビューを開始",
+  }
+)
 
 vim.api.nvim_create_user_command("StorylinePick", function()
   require("storyline").start_with_picker()

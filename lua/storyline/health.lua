@@ -17,7 +17,9 @@ function M.check()
     health.ok("gitsigns.nvim が読み込めます")
     local actions_ok, actions = pcall(require, "gitsigns")
     if actions_ok and type(actions.toggle_deleted) ~= "function" then
-      health.warn("gitsigns.toggle_deleted がありません（gitsigns の更新で削除された可能性。unified 表示に影響します）")
+      health.warn(
+        "gitsigns.toggle_deleted がありません（gitsigns の更新で削除された可能性。unified 表示に影響します）"
+      )
     end
   else
     health.error("gitsigns.nvim が必要です（unified/split 表示に使用）")
@@ -33,7 +35,9 @@ function M.check()
     end
   end
   if not any then
-    health.warn("AI バックエンドが1つもありません（ディレクトリ単位のフォールバックのみ動作します）")
+    health.warn(
+      "AI バックエンドが1つもありません（ディレクトリ単位のフォールバックのみ動作します）"
+    )
   end
 
   if vim.fn.executable("gh") == 1 then

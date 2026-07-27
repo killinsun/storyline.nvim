@@ -274,7 +274,8 @@ local function is_read_noise(path)
   if lower:match("migration.*%.sql$") or lower:match("%.sql$") and lower:find("migrat", 1, true) then
     return true
   end
-  if lower:match("%.lock$")
+  if
+    lower:match("%.lock$")
     or lower:match("package%-lock%.json$")
     or lower:match("yarn%.lock$")
     or lower:match("pnpm%-lock%.yaml$")
@@ -368,7 +369,8 @@ function M.gather_read_candidates(topic, max_files)
   -- まだ少ないときは tracked ファイルからソースっぽいものを足す（AI が選べるように）
   if #paths < 20 then
     for _, path in ipairs(all) do
-      if path:match("%.[tj]sx?$")
+      if
+        path:match("%.[tj]sx?$")
         or path:match("%.lua$")
         or path:match("%.py$")
         or path:match("%.go$")
@@ -403,7 +405,8 @@ local REFINE_STOP = {
 
 local function refine_mode(instruction)
   local lower = instruction:lower()
-  if instruction:find("除外", 1, true)
+  if
+    instruction:find("除外", 1, true)
     or instruction:find("除く", 1, true)
     or instruction:find("なし", 1, true)
     or instruction:find("いらない", 1, true)
@@ -411,16 +414,10 @@ local function refine_mode(instruction)
   then
     return "exclude"
   end
-  if instruction:find("配下", 1, true)
-    or instruction:find("以下", 1, true)
-    or lower:find("under", 1, true)
-  then
+  if instruction:find("配下", 1, true) or instruction:find("以下", 1, true) or lower:find("under", 1, true) then
     return "under"
   end
-  if instruction:find("だけ", 1, true)
-    or instruction:find("のみ", 1, true)
-    or lower:find("only", 1, true)
-  then
+  if instruction:find("だけ", 1, true) or instruction:find("のみ", 1, true) or lower:find("only", 1, true) then
     return "only"
   end
   return "include"

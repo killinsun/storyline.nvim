@@ -433,7 +433,10 @@ function M.render()
     end
     if show_stat then
       table.insert(marks, { line = row, hl = "StorylineAdded", col_s = name_e, col_e = name_e + #plus })
-      table.insert(marks, { line = row, hl = "StorylineRemoved", col_s = name_e + #plus, col_e = name_e + #plus + #minus })
+      table.insert(
+        marks,
+        { line = row, hl = "StorylineRemoved", col_s = name_e + #plus, col_e = name_e + #plus + #minus }
+      )
     end
   end
 
@@ -476,7 +479,11 @@ function M.render()
   elseif compare and compare.mode == "commit" then
     add(("from: %s → HEAD"):format(compare.label or git.short_sha(s.from_rev or s.merge_base)), nil, "StorylineStat")
   else
-    add(("base: %s"):format(s.base_ref ~= "" and s.base_ref or (compare and compare.label) or "?"), nil, "StorylineStat")
+    add(
+      ("base: %s"):format(s.base_ref ~= "" and s.base_ref or (compare and compare.label) or "?"),
+      nil,
+      "StorylineStat"
+    )
   end
   add("")
 

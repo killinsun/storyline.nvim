@@ -381,7 +381,10 @@ local function format_scout_message(scout)
   end
   table.insert(lines, "")
   table.insert(lines, scout.question)
-  table.insert(lines, "番号かキーワードで答えてください。空 Enter / 「全部」でまとめて読みます。")
+  table.insert(
+    lines,
+    "番号かキーワードで答えてください。空 Enter / 「全部」でまとめて読みます。"
+  )
   return table.concat(lines, "\n")
 end
 
@@ -559,7 +562,10 @@ function M.start_read(topic)
 
   local paths = git.gather_read_candidates(topic, 150)
   if #paths == 0 then
-    vim.notify("Storyline: トピックに関連する候補ファイルが見つかりませんでした", vim.log.levels.WARN)
+    vim.notify(
+      "Storyline: トピックに関連する候補ファイルが見つかりませんでした",
+      vim.log.levels.WARN
+    )
     return
   end
 

@@ -190,10 +190,7 @@ describe("プロンプトのカスタマイズ", function()
       },
     })
     assert.equals("CUSTOM_ANALYZE:3", prompt.build(ctx))
-    assert.equals(
-      "CUSTOM_Q:why?",
-      prompt.build_question({ chapter = { files = {} }, diff = "", question = "why?" })
-    )
+    assert.equals("CUSTOM_Q:why?", prompt.build_question({ chapter = { files = {} }, diff = "", question = "why?" }))
   end)
 
   it("instruction / current_chapters が組み替えプロンプトに入る", function()
