@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: stylua
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: JohnnyMorganz/stylua-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: latest
+          args: --check .
+
+  test:
+    name: plenary busted (${{ matrix.neovim }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        neovim: [stable, nightly]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.neovim }}
+
+      # tests/minimal_init.lua は lazy.nvim のインストール先から依存を借りるため、
+      # CI でも同じパス（stdpath("data")/lazy）に配置する
+      - name: Install test dependencies
+        run: |
+          deps="$HOME/.local/share/nvim/lazy"
+          mkdir -p "$deps"
+          git clone --depth 1 https://github.com/nvim-lua/plenary.nvim "$deps/plenary.nvim"
+          git clone --depth 1 https://github.com/lewis6991/gitsigns.nvim "$deps/gitsigns.nvim"
+
+      - name: Run tests
+        run: make test 2>&1 | tee test.log
+
+      # PlenaryBustedDirectory は失敗しても終了コードが 0 になることがあるため出力で判定する
+      - name: Check test results
+        run: |
+          if grep -qE "Failed :[[:space:]]*[1-9]|Errors :[[:space:]]*[1-9]" test.log; then
+            echo "::error::test failures detected"
+            exit 1
+          fi

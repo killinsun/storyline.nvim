@@ -1,0 +1,334 @@
+*storyline.txt*    Read a pull request as a story, in chapters written by AI
+
+Author:  rytake <https://github.com/killinsun>
+License: MIT
+
+==============================================================================
+CONTENTS                                                  *storyline-contents*
+
+  1. Introduction ........................... |storyline-introduction|
+  2. Requirements ........................... |storyline-requirements|
+  3. Setup .................................. |storyline-setup|
+  4. Commands ............................... |storyline-commands|
+  5. Sidebar ................................ |storyline-sidebar|
+  6. Main pane .............................. |storyline-main-pane|
+  7. Read mode .............................. |storyline-read-mode|
+  8. Reorganizing the story ................. |storyline-reorganize|
+  9. Configuration .......................... |storyline-configuration|
+ 10. Prompt customization ................... |storyline-prompts|
+ 11. Backends ............................... |storyline-backends|
+ 12. Caching and progress ................... |storyline-cache|
+ 13. Health and tests ....................... |storyline-health|
+
+==============================================================================
+1. INTRODUCTION                                       *storyline-introduction*
+
+Reviewing a pull request file by file, in alphabetical order, tells you what
+changed but not why. storyline.nvim asks an AI CLI to split the diff into
+meaningful chapters and then walks you through them in reading order.
+
+- The AI reads the diff and returns chapters: a title, a summary, review
+  points, and the files that belong to that chapter.
+- Chapters and their files are listed in a sidebar, as a directory tree that
+  looks like GitHub's PR file tree.
+- Selecting a chapter shows its summary and what to look for.
+- The main pane holds the *real file buffer*, so `gd`, `gr` and hover work as
+  usual. This is the main difference from a dedicated diff viewer.
+- The diff itself is drawn by gitsigns, switchable between unified and split.
+
+==============================================================================
+2. REQUIREMENTS                                       *storyline-requirements*
+
+- Neovim 0.10 or later
+- gitsigns.nvim <https://github.com/lewis6991/gitsigns.nvim>
+- One AI CLI: `claude`, `codex` or `cursor-agent`. Without any of them the
+  plugin still works, falling back to grouping files by directory.
+- Optional: `gh`, used to detect the pull request's base branch
+- Optional: telescope.nvim, for the built-in pickers
+- Optional: diffview.nvim, to open a whole chapter as a diff (`v`)
+- Optional: nvim-web-devicons, for file icons in the sidebar
+- Optional: which-key.nvim, to list sidebar keys with `<Space>`
+
+==============================================================================
+3. SETUP                                                     *storyline-setup*
+
+With lazy.nvim: >lua
+
+    {
+      "killinsun/storyline.nvim",
+      dependencies = { "lewis6991/gitsigns.nvim" },
+      cmd = { "Storyline", "StorylinePick", "StorylineRead" },
+      keys = {
+        { "<leader>gs", "<cmd>Storyline<cr>", desc = "Story-mode review" },
+        { "<leader>sl", "<cmd>StorylineRead<cr>", desc = "Read by topic" },
+      },
+      opts = {},
+    }
+<
+==============================================================================
+4. COMMANDS                                               *storyline-commands*
+
+                                                                  *:Storyline*
+:Storyline [{base}]
+    Start a review. Without an argument you are asked to choose the compare
+    range: from the pull request base (merge-base to working tree), or from a
+    commit to HEAD. With {base} the given ref is used directly; branch names
+    complete.
+
+                                                              *:StorylinePick*
+:StorylinePick
+    Start a review, choosing the base branch from a picker.
+
+                                                              *:StorylineRead*
+:StorylineRead [{topic}]
+    Read code by topic instead of by diff. See |storyline-read-mode|. Without
+    {topic} the AI suggests angles first and you refine them in a chat float.
+
+                                                           *:StorylineRefresh*
+:StorylineRefresh
+    Re-run the AI analysis, ignoring the cache.
+
+                                                           *:StorylineBackend*
+:StorylineBackend
+    Switch the AI backend for this session. See |storyline-backends|.
+
+                                                             *:StorylineClose*
+:StorylineClose
+    Close the review.
+
+==============================================================================
+5. SIDEBAR                                                 *storyline-sidebar*
+
+Keys inside the sidebar buffer:
+
+    <CR>        Open the chapter summary, or open the file under the cursor
+    <Tab>       Open the file but keep focus in the sidebar (preview)
+    h / l       Collapse / expand the chapter
+    o           Show the chapter summary float
+    v           Open the whole chapter in diffview.nvim
+    m           Toggle read state (file line: that file; chapter line: all)
+    a           Ask the LLM about this chapter
+    A           Tell the LLM how to reorganize the story
+    B           Pick a different compare range
+    ]c / [c     Next / previous chapter
+    R           Re-run the analysis, ignoring the cache
+    q           Close
+    <Space>     List these keys (requires which-key.nvim)
+
+`<Tab>` is configurable, see |storyline-keymaps|.
+
+Read files are marked `✓`, unread `·`. Opening a file marks it read.
+
+The file list is a directory tree by default. Chains of single-child
+directories are joined onto one line, like `worker/handlers`. File names are
+coloured by status - green added, red deleted, yellow renamed - followed by
+`+N -M`. Set |storyline-sidebar_style| to `"flat"` for a plain path list.
+
+==============================================================================
+6. MAIN PANE                                             *storyline-main-pane*
+
+The main pane shows the real file, not a diff buffer, so LSP navigation is
+unaffected. The diff is rendered by gitsigns on top of it.
+
+`<leader>gl` toggles unified and split (see |storyline-keymaps|). Files whose
+change count reaches |storyline-auto_split_lines| open in split automatically.
+
+==============================================================================
+7. READ MODE                                             *storyline-read-mode*
+
+|:StorylineRead| drops the diff entirely and structures existing code around a
+topic - useful for onboarding onto an unfamiliar area.
+
+Without an argument the flow is:
+
+  1. The AI scouts the repository and proposes topics.
+  2. You pick or refine one in a chat float. Instructions like "only under
+     `apps/api`", "exclude tests" or "just the resolvers" narrow the candidate
+     files.
+  3. The AI groups the resulting files into chapters, same as a review.
+
+`v` (open chapter in diffview) is not available in read mode - there is no
+diff to show.
+
+==============================================================================
+8. REORGANIZING THE STORY                                *storyline-reorganize*
+
+`A` in the sidebar asks for a free-text instruction and has the LLM rebuild
+the chapter layout, for example:
+
+    "group it around the single key change of this PR"
+    "order it so each request can be traced from its resolver"
+
+The sidebar updates in place. Read state is preserved where files still exist.
+
+==============================================================================
+9. CONFIGURATION                                       *storyline-configuration*
+
+Defaults: >lua
+
+    require("storyline").setup({
+      backend = "claude",
+      backends = {
+        claude = { cmd = "claude", args = { "-p" } },
+        codex = { cmd = "codex", args = { "exec", "--sandbox", "read-only", "-" } },
+        cursor = { cmd = "cursor-agent", args = { "-p" } },
+      },
+      timeout_ms = 120000,
+      max_diff_lines_per_file = 400,
+      sidebar_width = 36,
+      sidebar_style = "tree",
+      shorten_paths = true,
+      layout = "unified",
+      auto_split_lines = 80,
+      unified = {
+        word_diff = false,
+        diff_opts = { algorithm = "histogram", indent_heuristic = true },
+      },
+      auto_read_mark = true,
+      auto_summary = true,
+      pick_base = nil,
+      keymaps = {
+        toggle_layout = "<leader>gl",
+        preview = "<Tab>",
+      },
+      prompts = { ... },  -- see |storyline-prompts|
+    })
+<
+                                                         *storyline-backend*
+backend~
+    `"claude"` | `"codex"` | `"cursor"` | `"auto"`, default `"claude"`
+    `"auto"` picks the first available CLI.
+
+                                                 *storyline-config-backends*
+backends~
+    Command and arguments per backend. Override to add flags, pin a model, or
+    point at a wrapper script. See |storyline-backends|.
+
+                                                       *storyline-timeout_ms*
+timeout_ms~
+    number, default `120000`
+    How long to wait for the AI CLI.
+
+                                          *storyline-max_diff_lines_per_file*
+max_diff_lines_per_file~
+    number, default `400`
+    Per-file cap on diff lines sent in the prompt. Large files are truncated
+    so one generated file cannot eat the whole context.
+
+                                                    *storyline-sidebar_width*
+sidebar_width~
+    number, default `36`
+
+                                                    *storyline-sidebar_style*
+sidebar_style~
+    `"tree"` | `"flat"`, default `"tree"`
+    Directory tree, or a plain list of paths.
+
+                                                    *storyline-shorten_paths*
+shorten_paths~
+    boolean, default `true`
+    In `"flat"` style, fold the common directory prefix and shorten paths that
+    do not fit. File names are never truncated.
+
+                                                          *storyline-layout*
+layout~
+    `"unified"` | `"split"`, default `"unified"`
+    Initial diff layout.
+
+                                                *storyline-auto_split_lines*
+auto_split_lines~
+    number, default `80`
+    Open files with at least this many changed lines in split. `0` disables.
+
+                                                         *storyline-unified*
+unified~
+    `word_diff` enables word-level diff in unified view (off by default).
+    `diff_opts` is passed to |vim.diff()|.
+
+                                                   *storyline-auto_read_mark*
+auto_read_mark~
+    boolean, default `true`
+    Mark a chapter read once all of its files have been opened.
+
+                                                    *storyline-auto_summary*
+auto_summary~
+    boolean, default `true`
+    Show the summary float when switching chapters.
+
+                                                       *storyline-pick_base*
+pick_base~
+    function|nil, default `nil`
+    `function(cb)` that resolves a base branch and calls `cb(branch)`. Use it
+    to plug in your own picker: >lua
+
+        pick_base = function(cb)
+          require("config.git").pick_base_branch(cb)
+        end
+<
+    `nil` uses the built-in telescope / |vim.ui.select()| picker.
+
+                                                         *storyline-keymaps*
+keymaps~
+    `toggle_layout` (default `"<leader>gl"`) toggles unified / split.
+    `preview` (default `"<Tab>"`) opens a file keeping sidebar focus.
+
+==============================================================================
+10. PROMPT CUSTOMIZATION                                    *storyline-prompts*
+
+>lua
+    require("storyline").setup({
+      prompts = {
+        analyze_extra = "Write chapter titles in English",
+        read_extra = "",
+        ask_extra = "Answer as a bullet list",
+        build_analyze = nil,
+        build_question = nil,
+      },
+    })
+<
+`analyze_extra`, `read_extra` and `ask_extra` are appended to the built-in
+prompts as extra instructions - the usual way to adjust behaviour.
+
+`build_analyze` and `build_question` replace a prompt entirely and are for
+advanced use. `build_analyze(ctx)` receives `{ files, stat, diff, pr }` and
+must include the output JSON schema instructions itself, or parsing fails and
+the plugin falls back to directory grouping. `build_question(args)` receives
+`{ story_title, base_ref, chapter, diff, question }`.
+
+==============================================================================
+11. BACKENDS                                              *storyline-backends*
+
+The AI is any CLI that reads a prompt and prints text. Built-in entries:
+
+    claude      `claude -p`
+    codex       `codex exec --sandbox read-only -`
+    cursor      `cursor-agent -p`
+
+Switch at runtime with |:StorylineBackend|. If the analysis output cannot be
+parsed - or no CLI is available at all - the plugin falls back to grouping the
+changed files by top-level directory, so a review is always possible.
+
+==============================================================================
+12. CACHING AND PROGRESS                                     *storyline-cache*
+
+Analysis results are cached per HEAD and per set of changed files. Editing a
+line while reviewing therefore does not trigger a re-analysis; adding or
+removing a file does. On a cache hit the stored chapters are reconciled with
+the current file set: vanished paths are dropped and new files are collected
+into a catch-all chapter.
+
+Read state is persisted per compare range, so closing and reopening a review
+keeps your progress. |:StorylineRefresh| (or `R`) forces a fresh analysis.
+
+==============================================================================
+13. HEALTH AND TESTS                                        *storyline-health*
+
+Check the setup - Neovim version, gitsigns, available AI CLIs, `gh`: >
+
+    :checkhealth storyline
+<
+Run the test suite (requires plenary.nvim): >
+
+    $ make test
+<
+vim:tw=78:ts=8:noet:ft=help:norl:

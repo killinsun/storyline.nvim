@@ -2,6 +2,8 @@
 
 PR の変更内容を AI が「意味のある単位（チャプター）」に分解し、物語を読むように順番にレビューできる Neovim プラグイン。
 
+[English README](./README.md)
+
 - AI（Claude Code / Codex CLI / Cursor Agent）が diff を解析し、チャプター見出し + ファイル一覧を左サイドバーに表示
 - チャプター選択時に「概要と読むポイント」をフロートで表示
 - メインペインは常に**実ファイルバッファ**なので、LSP のコードジャンプ（`gd` / `gr` / hover）がそのまま使える
@@ -17,18 +19,20 @@ PR の変更内容を AI が「意味のある単位（チャプター）」に�
 ## セットアップ（lazy.nvim）
 
 ```lua
-return {
-  dir = vim.fn.expand("~/src/github.com/killinsun/storyline.nvim"),
-  name = "storyline.nvim",
+{
+  "killinsun/storyline.nvim",
   dependencies = { "lewis6991/gitsigns.nvim" },
-  cmd = { "Storyline", "StorylinePick", "StorylineBackend" },
+  cmd = { "Storyline", "StorylinePick", "StorylineRead", "StorylineBackend" },
   keys = {
     { "<leader>gs", "<cmd>Storyline<cr>", desc = "ストーリーモードレビュー" },
     { "<leader>gS", "<cmd>StorylinePick<cr>", desc = "base を選んでストーリーモードレビュー" },
+    { "<leader>sl", "<cmd>StorylineRead<cr>", desc = "トピックでコードを読む" },
   },
   opts = {},
 }
 ```
+
+詳細なリファレンスは `:help storyline`（英語）を参照。
 
 ## 使い方
 
