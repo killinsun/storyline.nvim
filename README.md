@@ -34,14 +34,19 @@ return {
 
 | 操作 | キー / コマンド |
 | --- | --- |
-| レビュー開始（base 自動検出） | `:Storyline` |
-| base ブランチを選んで開始 | `:StorylinePick` |
+| レビュー開始（比較範囲を選択） | `:Storyline` |
+| 比較範囲を選んで開始 | `:StorylinePick` |
+| トピックで読む（diff なし） | `:StorylineRead` / `<leader>sl`（AI が切り口を提案 → チャットで選択 → 解析） |
 | AI バックエンド切替 | `:StorylineBackend` |
 | キャッシュ無視で再解析 | `:StorylineRefresh`（サイドバーで `R`） |
 
 ### サイドバー
 
-`j/k` 移動、`h/l` チャプター折畳/展開、`<CR>` チャプター概要 / ファイルを開く、`<Tab>` フォーカスを残して開く（プレビュー）、`o` 概要フロート、`v` チャプターを Diffview で開く、`m` 読了トグル、`a` チャプターについて LLM に質問、`]c` `[c` チャプター移動、`q` 終了。
+`j/k` 移動、`h/l` チャプター折畳/展開、`<CR>` チャプター概要 / ファイルを開く、`<Tab>` フォーカスを残して開く（プレビュー）、`o` 概要フロート、`v` チャプターを Diffview で開く、`m` 読了トグル（ファイル行ならファイル、チャプター行ならチャプター）、`a` チャプターについて LLM に質問、`A` ストーリーの組み替えを指示、`B` 比較範囲を選び直す、`]c` `[c` チャプター移動、`q` 終了。which-key.nvim が入っていればサイドバーで `<Space>` を押すとこれらの操作が一覧表示される。
+
+起動時（および `B`）では **PR base から** / **コミットから HEAD** を選べる。PR base 選択は `opts.pick_base` で差し替え可能（例: ホストの telescope ブランチ picker）。
+
+`A` では「この PR の一番キーとなるものでまとめて」「リクエストごとに resolver から辿れるように」など自然言語で指示でき、LLM がチャプター構成を組み替えてサイドバーを更新する。ファイルの読了は `✓` / `·` で表示され、開いたとき、または `m` でトグルできる。
 
 ファイル一覧は GitHub の PR ツリーのように**ディレクトリ階層**で表示する（デフォルト）。単一子ディレクトリの連鎖は `worker/handlers` のように1行へ連結し、ファイル名のステータス（追加=緑 / 削除=赤 / リネーム=黄）と `+N -M` を色付きで表示。nvim-web-devicons があればファイルアイコンも出る。
 
@@ -57,6 +62,12 @@ return {
 require("storyline").setup({
   backend = "claude", -- "claude" | "codex" | "cursor" | "auto"
   layout = "unified", -- 初期レイアウト
+  auto_split_lines = 80, -- 変更行数がこの値以上で split へ自動切替（0 で無効）
+  -- pick_base = function(cb) require("config.git").pick_base_branch(cb) end,
+  unified = {
+    word_diff = false, -- unified 表示で単語単位 diff（デフォルト off）
+    diff_opts = { algorithm = "histogram", indent_heuristic = true },
+  },
   max_diff_lines_per_file = 400,
   sidebar_width = 36,
   sidebar_style = "tree", -- "tree"（GitHub 風ツリー）| "flat"（パス一覧）

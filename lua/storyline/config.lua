@@ -19,10 +19,22 @@ M.defaults = {
   shorten_paths = true,
   -- "unified" | "split"
   layout = "unified",
+  -- 追加+削除行数がこの値以上のファイルを開くと split 表示へ自動切替（0 で無効）
+  auto_split_lines = 80,
+  unified = {
+    word_diff = false,
+    diff_opts = {
+      algorithm = "histogram",
+      indent_heuristic = true,
+    },
+  },
   -- チャプター内の全ファイルを開いたら自動で読了マーク
   auto_read_mark = true,
   -- チャプター切替時に概要フロートを自動表示
   auto_summary = true,
+  -- base ブランチ選択。function(cb) で cb(branch) を呼ぶ。
+  -- nil なら内蔵 telescope / vim.ui.select。
+  pick_base = nil,
   keymaps = {
     toggle_layout = "<leader>gl",
     -- サイドバー: フォーカスを残したままファイルを開く
@@ -33,6 +45,9 @@ M.defaults = {
     -- チャプター分解プロンプトに「追加の指示」として追記する文字列
     -- 例: "チャプター名は英語で書く" / "テストは実装と同じチャプターに入れる"
     analyze_extra = "",
+    -- 読むモード（StorylineRead）プロンプトへの追記
+    read_extra = "",
+    -- build_read_scout = function(ctx) ... end  -- 事前調査プロンプト差し替え
     -- チャプター質問（サイドバー a）プロンプトへの追記
     ask_extra = "",
     -- プロンプト全体を差し替える関数（上級者向け）。

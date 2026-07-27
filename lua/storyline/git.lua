@@ -85,6 +85,403 @@ function M.complete_branches()
   return M.list_branches()
 end
 
+--- ISO8601（%cI）を JST の MM/DD HH:mm にする
+function M.format_jst(iso)
+  if not iso or iso == "" then
+    return "??/?? ??:??"
+  end
+  local y, mo, d, h, mi, s = iso:match("^(%d+)%-(%d+)%-(%d+)T(%d+):(%d+):(%d+)")
+  if not y then
+    return "??/?? ??:??"
+  end
+  y, mo, d, h, mi, s = tonumber(y), tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s) or 0
+
+  local offset_sec = 0
+  if not iso:match("Z$") then
+    local sign, oh, om = iso:match("([+-])(%d%d):?(%d%d)$")
+    if sign then
+      offset_sec = (tonumber(oh) * 3600 + tonumber(om) * 60) * (sign == "-" and -1 or 1)
+    end
+  end
+
+  -- os.time はローカル解釈。UTC epoch = local解釈 + local_tz - 記載オフセット
+  local as_local = os.time({
+    year = y,
+    month = mo,
+    day = d,
+    hour = h,
+    min = mi,
+    sec = s,
+    isdst = false,
+  })
+  if not as_local then
+    return string.format("%02d/%02d %02d:%02d", mo, d, h, mi)
+  end
+  local now = os.time()
+  local local_tz = os.difftime(now, os.time(os.date("!*t", now)))
+  local utc_epoch = as_local + local_tz - offset_sec
+  local jst = os.date("!*t", utc_epoch + 9 * 3600)
+  return string.format("%02d/%02d %02d:%02d", jst.month, jst.day, jst.hour, jst.min)
+end
+
+--- 表示用: `988c661  07/16 06:12  #128  subject`
+function M.format_commit_display(c)
+  local pr_col = c.pr and ("#" .. tostring(c.pr)) or ""
+  return string.format("%s  %s  %-6s%s", c.short or "", c.when_jst or "??/?? ??:??", pr_col, c.subject or "")
+end
+
+--- gh で最近の PR を取り、commit sha → PR number のマップを作る（失敗時は空）
+local function pr_number_by_sha()
+  if vim.fn.executable("gh") == 0 then
+    return {}
+  end
+  local ok, proc = pcall(vim.system, {
+    "gh",
+    "pr",
+    "list",
+    "--state",
+    "all",
+    "--limit",
+    "40",
+    "--json",
+    "number,commits,mergeCommit",
+  }, { text = true })
+  if not ok then
+    return {}
+  end
+  local result = proc:wait()
+  if result.code ~= 0 then
+    return {}
+  end
+  local decoded_ok, data = pcall(vim.json.decode, result.stdout or "")
+  if not decoded_ok or type(data) ~= "table" then
+    return {}
+  end
+
+  local map = {}
+  for _, pr in ipairs(data) do
+    local num = pr.number
+    if type(num) == "number" then
+      if type(pr.mergeCommit) == "table" and type(pr.mergeCommit.oid) == "string" then
+        map[pr.mergeCommit.oid] = num
+      end
+      if type(pr.commits) == "table" then
+        for _, c in ipairs(pr.commits) do
+          if type(c) == "table" and type(c.oid) == "string" then
+            map[c.oid] = num
+          end
+        end
+      end
+    end
+  end
+  return map
+end
+
+--- 最近のコミット一覧: { { sha, short, subject, when_jst, pr? } }
+function M.list_commits(limit)
+  limit = limit or 50
+  local lines = run({
+    "git",
+    "log",
+    "-n",
+    tostring(limit),
+    "--format=%H\t%h\t%cI\t%s",
+  }) or {}
+  local commits = {}
+  for _, line in ipairs(lines) do
+    local sha, short, iso, subject = line:match("^([^\t]+)\t([^\t]+)\t([^\t]+)\t(.*)$")
+    if sha then
+      table.insert(commits, {
+        sha = sha,
+        short = short,
+        subject = subject or "",
+        when_jst = M.format_jst(iso),
+      })
+    end
+  end
+
+  local pr_map = pr_number_by_sha()
+  for _, c in ipairs(commits) do
+    c.pr = pr_map[c.sha]
+    if not c.pr then
+      local n = c.subject:match("%(#(%d+)%)") or c.subject:match("Merge pull request #(%d+)")
+      if n then
+        c.pr = tonumber(n)
+      end
+    end
+  end
+
+  return commits
+end
+
+--- from_rev を短縮表示用に
+function M.short_sha(rev)
+  if not rev then
+    return ""
+  end
+  local short = first_line({ "git", "rev-parse", "--short", rev })
+  return short or rev:sub(1, 7)
+end
+
+--- トピックから検索トークンを抜く（日本語文でも ASCII 識別子を拾う）
+local function read_tokens(topic)
+  local tokens, seen = {}, {}
+  local function add_tok(t)
+    if not t or t == "" or seen[t] then
+      return
+    end
+    -- 1文字だけのノイズは除外（日本語助詞など）
+    if vim.fn.strchars(t) < 2 then
+      return
+    end
+    seen[t] = true
+    table.insert(tokens, t)
+  end
+
+  for tok in (topic or ""):gmatch("%S+") do
+    add_tok(tok)
+  end
+  -- CamelCase / snake_case / 英数字かたまり
+  for tok in (topic or ""):gmatch("[%w_]+") do
+    if #tok >= 2 and not tok:match("^%d+$") then
+      add_tok(tok)
+    end
+  end
+  return tokens
+end
+
+local RG_GLOBS = {
+  "!**/node_modules/**",
+  "!**/.git/**",
+  "!**/dist/**",
+  "!**/build/**",
+  "!**/coverage/**",
+  "!**/migrations/**",
+  "!**/prisma/migrations/**",
+  "!**/*migration*.sql",
+  "!**/*.lock",
+  "!**/package-lock.json",
+  "!**/yarn.lock",
+  "!**/pnpm-lock.yaml",
+}
+
+--- 読むモードの候補から外すノイズ（migration / lock / 生成物など）
+local function is_read_noise(path)
+  local lower = path:lower()
+  if lower:match("/migrations?/") or lower:match("^migrations?/") then
+    return true
+  end
+  if lower:match("migration.*%.sql$") or lower:match("%.sql$") and lower:find("migrat", 1, true) then
+    return true
+  end
+  if lower:match("%.lock$")
+    or lower:match("package%-lock%.json$")
+    or lower:match("yarn%.lock$")
+    or lower:match("pnpm%-lock%.yaml$")
+  then
+    return true
+  end
+  if lower:match("%.min%.[jt]s$") or lower:match("%.map$") or lower:match("%.snap$") then
+    return true
+  end
+  if lower:find("/generated/", 1, true) or lower:find("/.next/", 1, true) then
+    return true
+  end
+  return false
+end
+
+--- 読むモード用: トピックに関連しそうな候補パスを集める（実在する tracked ファイルのみ）
+function M.gather_read_candidates(topic, max_files)
+  max_files = max_files or 150
+  local root = M.repo_root()
+  if not root then
+    return {}
+  end
+
+  local seen, paths = {}, {}
+  local function add(p)
+    if not p or p == "" or seen[p] then
+      return
+    end
+    -- 絶対パスやリポジトリ外は捨てる
+    if p:sub(1, 1) == "/" then
+      return
+    end
+    if is_read_noise(p) then
+      return
+    end
+    seen[p] = true
+    table.insert(paths, p)
+  end
+
+  local tokens = read_tokens(topic)
+  if #tokens == 0 and topic and topic ~= "" then
+    table.insert(tokens, topic)
+  end
+
+  local all = run({ "git", "-C", root, "ls-files" }) or {}
+  for _, path in ipairs(all) do
+    local lower = path:lower()
+    for _, tok in ipairs(tokens) do
+      if lower:find(tok:lower(), 1, true) then
+        add(path)
+        break
+      end
+    end
+    if #paths >= max_files then
+      break
+    end
+  end
+
+  if vim.fn.executable("rg") == 1 then
+    for _, tok in ipairs(tokens) do
+      if #paths >= max_files then
+        break
+      end
+      -- 短すぎる / 日本語だけの長い文全体は rg のノイズになりやすいので、
+      -- 英数字トークンか短めの語だけ本文検索する
+      local is_ascii = tok:match("^[%w_]+$") ~= nil
+      if not is_ascii and vim.fn.strchars(tok) > 16 then
+        goto continue
+      end
+      local args = { "rg", "-l", "-i", "-F", tok }
+      for _, g in ipairs(RG_GLOBS) do
+        table.insert(args, "--glob")
+        table.insert(args, g)
+      end
+      local ok, proc = pcall(vim.system, args, { cwd = root, text = true })
+      if ok then
+        local result = proc:wait()
+        if result.code == 0 or result.code == 1 then
+          for _, line in ipairs(vim.split(result.stdout or "", "\n", { plain = true })) do
+            add(line)
+            if #paths >= max_files then
+              break
+            end
+          end
+        end
+      end
+      ::continue::
+    end
+  end
+
+  -- まだ少ないときは tracked ファイルからソースっぽいものを足す（AI が選べるように）
+  if #paths < 20 then
+    for _, path in ipairs(all) do
+      if path:match("%.[tj]sx?$")
+        or path:match("%.lua$")
+        or path:match("%.py$")
+        or path:match("%.go$")
+        or path:match("%.graphql$")
+        or path:match("%.gql$")
+      then
+        add(path)
+      end
+      if #paths >= math.min(80, max_files) then
+        break
+      end
+    end
+  end
+
+  table.sort(paths)
+  return paths
+end
+
+local REFINE_STOP = {
+  ["除外"] = true,
+  ["除く"] = true,
+  ["なし"] = true,
+  ["いらない"] = true,
+  ["exclude"] = true,
+  ["だけ"] = true,
+  ["のみ"] = true,
+  ["only"] = true,
+  ["配下"] = true,
+  ["以下"] = true,
+  ["under"] = true,
+}
+
+local function refine_mode(instruction)
+  local lower = instruction:lower()
+  if instruction:find("除外", 1, true)
+    or instruction:find("除く", 1, true)
+    or instruction:find("なし", 1, true)
+    or instruction:find("いらない", 1, true)
+    or lower:find("exclude", 1, true)
+  then
+    return "exclude"
+  end
+  if instruction:find("配下", 1, true)
+    or instruction:find("以下", 1, true)
+    or lower:find("under", 1, true)
+  then
+    return "under"
+  end
+  if instruction:find("だけ", 1, true)
+    or instruction:find("のみ", 1, true)
+    or lower:find("only", 1, true)
+  then
+    return "only"
+  end
+  return "include"
+end
+
+local function path_under(path, prefix)
+  local p = path:lower()
+  local pre = prefix:lower():gsub("/+$", "")
+  if pre == "" then
+    return false
+  end
+  return p == pre or vim.startswith(p, pre .. "/")
+end
+
+--- 読むモード: 対話での絞り込み指示を候補パスに適用
+--- instruction 例: "migration 除外" / "graphql だけ" / "worker 配下"
+function M.refine_read_candidates(paths, instruction)
+  instruction = vim.trim(instruction or "")
+  if instruction == "" or not paths or #paths == 0 then
+    return paths or {}
+  end
+
+  local mode = refine_mode(instruction)
+  local words = {}
+  for tok in instruction:gmatch("%S+") do
+    if not REFINE_STOP[tok] and not REFINE_STOP[tok:lower()] then
+      table.insert(words, tok)
+    end
+  end
+  if #words == 0 then
+    return vim.deepcopy(paths)
+  end
+
+  local result = paths
+  for _, word in ipairs(words) do
+    local needle = word:lower()
+    local next_paths = {}
+    for _, path in ipairs(result) do
+      local lower = path:lower()
+      local hit
+      if mode == "under" then
+        hit = path_under(path, word)
+      else
+        hit = lower:find(needle, 1, true) ~= nil
+      end
+      if mode == "exclude" then
+        if not hit then
+          table.insert(next_paths, path)
+        end
+      else
+        -- include / only / under: ヒットしたものだけ残す
+        if hit then
+          table.insert(next_paths, path)
+        end
+      end
+    end
+    result = next_paths
+  end
+  return result
+end
+
 --- numstat のパス表記（"dir/{old => new}" / "old => new"）を新パスへ正規化
 local function normalize_rename(path)
   local prefix, old, new, suffix = path:match("^(.*){(.*) => (.*)}(.*)$")

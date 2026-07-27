@@ -10,6 +10,7 @@ local M = {
   current = nil, -- 表示中の file entry
   busy = false, -- gitsigns の非同期レイアウト適用中
   queued = nil, -- busy 中に来た open_file 要求（最新のみ保持）
+  auto_split_notified = {}, -- 自動 split 通知済みパス（同一ファイルの連続通知を抑止）
 }
 
 local augroup = vim.api.nvim_create_augroup("storyline_main", { clear = false })
@@ -22,7 +23,23 @@ end
 local function set_unified_toggles(g, on)
   pcall(g.toggle_deleted, on)
   pcall(g.toggle_linehl, on)
-  pcall(g.toggle_word_diff, on)
+  pcall(g.toggle_word_diff, on and config.options.unified.word_diff)
+end
+
+--- 変更行数が threshold 以上なら split 表示へ自動切替するか
+function M.should_auto_split(entry, threshold)
+  if not threshold or threshold <= 0 then
+    return false
+  end
+  if not entry or entry.status == "D" then
+    return false
+  end
+  return (entry.added or 0) + (entry.deleted or 0) >= threshold
+end
+
+local function is_read_mode()
+  local s = story.current
+  return s and s.mode == "read"
 end
 
 function M.setup_session()
@@ -31,6 +48,14 @@ function M.setup_session()
   M.mapped_bufs = {}
   M.busy = false
   M.queued = nil
+  M.auto_split_notified = {}
+
+  -- 読むモードは diff を使わない
+  if is_read_mode() then
+    M.saved = nil
+    vim.api.nvim_clear_autocmds({ group = augroup })
+    return
+  end
 
   local ok, gs_config = pcall(function()
     return require("gitsigns.config").config
@@ -40,7 +65,13 @@ function M.setup_session()
       show_deleted = gs_config.show_deleted,
       linehl = gs_config.linehl,
       word_diff = gs_config.word_diff,
+      diff_opts = vim.deepcopy(gs_config.diff_opts or {}),
     }
+    gs_config.diff_opts = vim.tbl_deep_extend(
+      "force",
+      vim.deepcopy(gs_config.diff_opts or {}),
+      config.options.unified.diff_opts
+    )
   end
 
   -- gd ジャンプなどで open_file を経由せず開かれたバッファにも merge-base 基準を適用する。
@@ -51,7 +82,7 @@ function M.setup_session()
     pattern = "GitSignsUpdate",
     callback = function(args)
       local s = story.current
-      if not s or M.layout_mode ~= "unified" or not layout.is_open() then
+      if not s or s.mode == "read" or M.layout_mode ~= "unified" or not layout.is_open() then
         return
       end
       local buf = args.data and args.data.buffer
@@ -84,6 +115,12 @@ function M.teardown()
     pcall(g.toggle_deleted, M.saved.show_deleted)
     pcall(g.toggle_linehl, M.saved.linehl)
     pcall(g.toggle_word_diff, M.saved.word_diff)
+    local ok, gs_config = pcall(function()
+      return require("gitsigns.config").config
+    end)
+    if ok and M.saved.diff_opts then
+      gs_config.diff_opts = M.saved.diff_opts
+    end
   end
   for buf in pairs(M.mapped_bufs) do
     if vim.api.nvim_buf_is_valid(buf) then
@@ -280,6 +317,22 @@ function M.open_file(entry, opts)
     attach_keymaps(vim.api.nvim_get_current_buf())
     finish()
   else
+    -- 読むモード: ソースをそのまま開く（diff / gitsigns なし）
+    if s.mode == "read" then
+      vim.cmd.edit(vim.fn.fnameescape(s.repo_root .. "/" .. entry.path))
+      attach_keymaps(vim.api.nvim_get_current_buf())
+      finish()
+      return
+    end
+    if M.should_auto_split(entry, config.options.auto_split_lines) then
+      if M.layout_mode ~= "split" then
+        M.layout_mode = "split"
+        if not M.auto_split_notified[entry.path] then
+          M.auto_split_notified[entry.path] = true
+          vim.notify("Storyline: 変更が大きいため split 表示に切り替えました", vim.log.levels.INFO)
+        end
+      end
+    end
     vim.cmd.edit(vim.fn.fnameescape(s.repo_root .. "/" .. entry.path))
     attach_keymaps(vim.api.nvim_get_current_buf())
     apply_layout(finish)
@@ -287,6 +340,10 @@ function M.open_file(entry, opts)
 end
 
 function M.toggle_layout()
+  if is_read_mode() then
+    vim.notify("Storyline: 読むモードでは diff レイアウト切替はありません", vim.log.levels.INFO)
+    return
+  end
   if M.busy then
     return
   end

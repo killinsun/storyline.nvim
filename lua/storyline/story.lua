@@ -92,6 +92,37 @@ function M.toggle_read(id)
   end
 end
 
+--- ファイルの読了チェックをトグルする。状態が変わったら true
+function M.toggle_opened(path)
+  local story = M.current
+  if not story or not path then
+    return false
+  end
+  if story.opened[path] then
+    story.opened[path] = nil
+  else
+    story.opened[path] = true
+  end
+  persist.save(story)
+  return true
+end
+
+--- AI 組み替え後にチャプター構成だけ差し替える。
+--- opened（パス単位）は維持し、read / collapsed / current_chapter はリセットする。
+function M.apply_chapters(title, chapters)
+  local story = M.current
+  if not story or type(chapters) ~= "table" or #chapters == 0 then
+    return false
+  end
+  story.title = title or story.title or ""
+  story.chapters = chapters
+  story.read = {}
+  story.collapsed = {}
+  story.current_chapter = 1
+  persist.save(story)
+  return true
+end
+
 --- サイドバーからカレントチャプターを切り替えた際に呼ぶ
 function M.set_current_chapter(id)
   local story = M.current

@@ -54,17 +54,26 @@ function M.common_dir_prefix(paths)
   return table.concat(prefix, "/")
 end
 
---- 表示幅に収まるようパスを短縮する。まず pathshorten（a/b/file.ts）、
---- それでも長ければファイル名優先で先頭を「…」に切り詰める
+--- 表示幅に収まるようパスを短縮する。ファイル名は絶対に省略せず、
+--- 親ディレクトリ側だけを「…/b/c/」形式で縮める。
 function M.shorten_path(path, max_width)
   if max_width <= 0 or vim.fn.strdisplaywidth(path) <= max_width then
     return path
   end
-  local short = vim.fn.pathshorten(path)
-  if vim.fn.strdisplaywidth(short) <= max_width then
-    return short
+  local name = path:match("[^/]+$") or path
+  if name == path then
+    -- ファイル名のみ: 省略しない（幅超過でも全文）
+    return name
   end
-  return "…" .. vim.fn.strcharpart(short, vim.fn.strchars(short) - (max_width - 1))
+  local dir = path:sub(1, #path - #name):gsub("/$", "")
+  local name_w = vim.fn.strdisplaywidth(name)
+  -- "/" + ファイル名 以外に使える幅
+  local dir_budget = max_width - name_w - 1
+  if dir_budget < 2 then
+    return name
+  end
+  local short_dir = M.shorten_dir(dir, dir_budget)
+  return short_dir .. "/" .. name
 end
 
 --- パス一覧をディレクトリツリーに変換する（テスト可能な純関数）。
@@ -228,10 +237,20 @@ local function ask_chapter()
     if not question or vim.trim(question) == "" then
       return
     end
-    local diff = git.files_diff(s.merge_base, ch.files, config.options.max_diff_lines_per_file)
+    local diff = ""
+    if s.mode ~= "read" and s.merge_base then
+      diff = git.files_diff(s.merge_base, ch.files, config.options.max_diff_lines_per_file)
+    else
+      -- 読むモード: パス一覧だけ渡す（diff なし）
+      local lines = { "(読むモード: diff なし)", "", "対象ファイル:" }
+      for _, f in ipairs(ch.files or {}) do
+        table.insert(lines, "- " .. f)
+      end
+      diff = table.concat(lines, "\n")
+    end
     local payload = prompt.build_question({
       story_title = s.title,
-      base_ref = s.base_ref,
+      base_ref = s.mode == "read" and ("read: " .. (s.topic or "")) or s.base_ref,
       chapter = ch,
       diff = diff,
       question = question,
@@ -250,6 +269,35 @@ local function ask_chapter()
       answer.show(question, text)
     end)
   end)
+end
+
+--- ユーザー指示でストーリー（チャプター構成）を組み替える
+local function reorganize_story()
+  if not story.current then
+    return
+  end
+  vim.ui.input({ prompt = "Storyline 組み替え: " }, function(instruction)
+    if not instruction or vim.trim(instruction) == "" then
+      return
+    end
+    require("storyline").reorganize(instruction)
+  end)
+end
+
+--- ファイル行なら読了チェック、チャプター行ならチャプター読了をトグル
+local function toggle_mark()
+  local entry = entry_at_cursor()
+  if not entry then
+    return
+  end
+  if entry.type == "file" then
+    if story.toggle_opened(entry.path) then
+      M.render()
+    end
+  elseif entry.type == "chapter" then
+    story.toggle_read(entry.id)
+    M.render()
+  end
 end
 
 local function setup_keymaps(buf)
@@ -271,19 +319,21 @@ local function setup_keymaps(buf)
     end
   end, "チャプター概要を表示")
   map("v", function()
+    if story.current and story.current.mode == "read" then
+      vim.notify("Storyline: 読むモードでは Diffview 連携はありません", vim.log.levels.INFO)
+      return
+    end
     local ch = chapter_at_cursor()
     if ch then
       require("storyline.ui.main").open_chapter_in_diffview(ch)
     end
   end, "チャプターを Diffview で開く")
-  map("m", function()
-    local ch = chapter_at_cursor()
-    if ch then
-      story.toggle_read(ch.id)
-      M.render()
-    end
-  end, "読了マークをトグル")
+  map("m", toggle_mark, "読了マークをトグル（ファイル / チャプター）")
   map("a", ask_chapter, "チャプターについて LLM に質問")
+  map("A", reorganize_story, "ストーリーの組み替えを指示")
+  map("B", function()
+    require("storyline").change_compare()
+  end, "比較範囲を選び直す")
   map("]c", function()
     jump_chapter(1)
   end, "次のチャプターへ")
@@ -296,6 +346,15 @@ local function setup_keymaps(buf)
   map("q", function()
     require("storyline").close()
   end, "終了")
+
+  -- which-key があるとき: Space でバッファローカル操作（a=質問 など）をサジェスト表示。
+  -- leader が Space の環境でも、サイドバーでは一覧を優先する。
+  local ok_wk, wk = pcall(require, "which-key")
+  if ok_wk then
+    vim.keymap.set("n", "<Space>", function()
+      wk.show({ global = false })
+    end, { buffer = buf, nowait = true, desc = "Storyline: 操作一覧" })
+  end
 end
 
 function M.attach(win)
@@ -341,9 +400,9 @@ function M.render()
     end
   end
 
-  --- ファイル行: 開封マーク + アイコン + 名前（ステータス色）+ 色付き +N -M
+  --- ファイル行: 読了チェック + アイコン + 名前（ステータス色）+ 色付き +N -M
   local function add_file_line(f, display_name, indent, chapter_id)
-    local opened = s.opened[f.path] and "•" or " "
+    local opened = s.opened[f.path] and "✓" or "·"
     local icon, icon_hl = "", nil
     if has_devicons then
       local i, hl = devicons.get_icon(f.path:match("[^/]+$") or f.path, nil, { default = true })
@@ -351,12 +410,14 @@ function M.render()
         icon, icon_hl = i .. " ", hl
       end
     end
-    local plus = " +" .. f.added
-    local minus = " -" .. f.deleted
+    local show_stat = s.mode ~= "read"
+    local plus = show_stat and (" +" .. f.added) or ""
+    local minus = show_stat and (" -" .. f.deleted) or ""
     local fixed = " " .. opened .. indent .. icon
     local avail = width - vim.fn.strdisplaywidth(fixed .. plus .. minus)
-    if avail > 1 and vim.fn.strdisplaywidth(display_name) > avail then
-      display_name = vim.fn.strcharpart(display_name, 0, avail - 1) .. "…"
+    -- ディレクトリ付きパスだけ縮める。ファイル名単体は省略しない
+    if display_name:find("/", 1, true) and avail > 1 and vim.fn.strdisplaywidth(display_name) > avail then
+      display_name = M.shorten_path(display_name, avail)
     end
     add(fixed .. display_name .. plus .. minus, { type = "file", path = f.path, chapter_id = chapter_id })
 
@@ -367,11 +428,13 @@ function M.render()
     end
     local name_s = #fixed
     local name_e = name_s + #display_name
-    if STATUS_HL[f.status] then
+    if STATUS_HL[f.status] and s.mode ~= "read" then
       table.insert(marks, { line = row, hl = STATUS_HL[f.status], col_s = name_s, col_e = name_e })
     end
-    table.insert(marks, { line = row, hl = "StorylineAdded", col_s = name_e, col_e = name_e + #plus })
-    table.insert(marks, { line = row, hl = "StorylineRemoved", col_s = name_e + #plus, col_e = name_e + #plus + #minus })
+    if show_stat then
+      table.insert(marks, { line = row, hl = "StorylineAdded", col_s = name_e, col_e = name_e + #plus })
+      table.insert(marks, { line = row, hl = "StorylineRemoved", col_s = name_e + #plus, col_e = name_e + #plus + #minus })
+    end
   end
 
   --- GitHub の PR ツリー風: ディレクトリ階層 + ファイル名のみ
@@ -406,7 +469,15 @@ function M.render()
   end
 
   add(s.title ~= "" and s.title or "Storyline", nil, "StorylineTitle")
-  add(("base: %s"):format(s.base_ref), nil, "StorylineStat")
+  local compare = s.compare
+  if s.mode == "read" then
+    local topic = s.topic or (compare and compare.label) or ""
+    add(("read: %s"):format(vim.fn.strcharpart(topic, 0, width - 6)), nil, "StorylineStat")
+  elseif compare and compare.mode == "commit" then
+    add(("from: %s → HEAD"):format(compare.label or git.short_sha(s.from_rev or s.merge_base)), nil, "StorylineStat")
+  else
+    add(("base: %s"):format(s.base_ref ~= "" and s.base_ref or (compare and compare.label) or "?"), nil, "StorylineStat")
+  end
   add("")
 
   for _, ch in ipairs(s.chapters) do

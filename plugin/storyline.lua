@@ -11,6 +11,15 @@ vim.api.nvim_create_user_command("StorylinePick", function()
   require("storyline").start_with_picker()
 end, { desc = "base ブランチを選んでストーリーモードレビューを開始" })
 
+vim.api.nvim_create_user_command("StorylineRead", function(cmd)
+  local topic = vim.trim(cmd.args or "")
+  if topic == "" then
+    require("storyline").start_read_interactive()
+  else
+    require("storyline").start_read(topic)
+  end
+end, { nargs = "*", desc = "トピックで読むべきコードをストーリー表示（diff なし）" })
+
 vim.api.nvim_create_user_command("StorylineRefresh", function()
   require("storyline").refresh()
 end, { desc = "キャッシュを無視して AI 解析をやり直す" })

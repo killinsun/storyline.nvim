@@ -77,6 +77,43 @@ function M.validate(decoded, files)
   }
 end
 
+--- 読むモード事前調査の JSON を正規化。無効なら nil。
+function M.validate_scout(decoded)
+  if type(decoded) ~= "table" then
+    return nil
+  end
+  local summary = type(decoded.summary) == "string" and vim.trim(decoded.summary) or ""
+  if summary == "" then
+    return nil
+  end
+
+  local options = {}
+  if type(decoded.options) == "table" then
+    for _, opt in ipairs(decoded.options) do
+      if type(opt) == "table" and type(opt.label) == "string" and vim.trim(opt.label) ~= "" then
+        table.insert(options, {
+          label = vim.trim(opt.label),
+          keywords = to_string_list(opt.keywords),
+        })
+      end
+    end
+  end
+  if #options == 0 then
+    return nil
+  end
+
+  local question = type(decoded.question) == "string" and vim.trim(decoded.question) or ""
+  if question == "" then
+    question = "どれに興味がありますか？"
+  end
+
+  return {
+    summary = summary,
+    question = question,
+    options = options,
+  }
+end
+
 --- AI 不調時のフォールバック: トップレベルディレクトリ単位でグルーピング
 function M.fallback(files)
   local groups, order = {}, {}

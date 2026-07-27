@@ -77,9 +77,8 @@ local function extract_json(text)
   return nil
 end
 
---- diff を AI で解析してチャプター構成を作る（完全非同期）
---- cb(story, err) はメインループで呼ばれる。story == nil ならエラー。
-function M.analyze(ctx, cb)
+--- validate(decoded) -> data|nil。files が必要な場合はクロージャで閉じる。
+local function run_json(payload, validate, cb)
   local backend = M.resolve_backend()
   if not backend then
     cb(nil, "利用可能な AI バックエンドがありません（backend = " .. config.options.backend .. "）")
@@ -87,7 +86,6 @@ function M.analyze(ctx, cb)
   end
 
   local cfg = backend_cfg(backend.name)
-  local payload = prompt.build(ctx)
 
   local function attempt(input, on_fail)
     local ok, proc = pcall(vim.system, backend.build_cmd(cfg), {
@@ -101,9 +99,9 @@ function M.analyze(ctx, cb)
           on_fail(backend.name .. " が異常終了しました (code=" .. result.code .. ") " .. err:sub(1, 200))
           return
         end
-        local story = schema.validate(extract_json(result.stdout), ctx.files)
-        if story then
-          cb(story)
+        local data = validate(extract_json(result.stdout))
+        if data then
+          cb(data)
         else
           on_fail(backend.name .. " の出力を JSON として解釈できませんでした")
         end
@@ -117,11 +115,31 @@ function M.analyze(ctx, cb)
   end
 
   attempt(payload, function()
-    -- 1回だけ「JSON のみで再出力」を指示してリトライ
     attempt(payload .. prompt.retry_suffix, function(err)
       cb(nil, err)
     end)
   end)
+end
+
+--- diff を AI で解析してチャプター構成を作る（完全非同期）
+--- cb(story, err) はメインループで呼ばれる。story == nil ならエラー。
+function M.analyze(ctx, cb)
+  run_json(prompt.build(ctx), function(decoded)
+    return schema.validate(decoded, ctx.files)
+  end, cb)
+end
+
+--- 読むモード: トピックに沿ってチャプター構成を作る
+function M.analyze_read(ctx, cb)
+  run_json(prompt.build_read(ctx), function(decoded)
+    return schema.validate(decoded, ctx.files)
+  end, cb)
+end
+
+--- 読むモード事前調査: 切り口の選択肢を返す
+--- cb(scout, err) scout = { summary, question, options = { {label, keywords} } }
+function M.scout_read(ctx, cb)
+  run_json(prompt.build_read_scout(ctx), schema.validate_scout, cb)
 end
 
 --- チャプターについての質問に自由テキストで回答させる（完全非同期、リトライなし）

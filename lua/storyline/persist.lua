@@ -4,9 +4,16 @@ local function state_dir()
   return vim.fn.stdpath("state") .. "/storyline"
 end
 
---- キー = repo_root / merge-base / HEAD の合成。HEAD が進めば別キーになり自然にリセットされる。
+--- キー = repo_root / mode / merge-base or topic / HEAD の合成。
 local function key_for(story_data)
-  return vim.fn.sha256(table.concat({ story_data.repo_root, story_data.merge_base, story_data.head_sha }, ":"))
+  local mode = story_data.mode or "pr"
+  local scope = story_data.merge_base or story_data.topic or story_data.from_rev or ""
+  return vim.fn.sha256(table.concat({
+    story_data.repo_root or "",
+    mode,
+    tostring(scope),
+    story_data.head_sha or "",
+  }, ":"))
 end
 
 local function path_for(key)
