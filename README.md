@@ -5,6 +5,7 @@ Read a pull request as a story. An AI CLI splits the diff into meaningful **chap
 [日本語 README](./README.ja.md)
 
 - AI (Claude Code / Codex CLI / Cursor Agent) analyses the diff and returns chapters — title, summary, review points, and the files that belong to each one
+- Chapters follow the call flow — a static import trace feeds the AI, so the story runs entry point → core logic, and tests always sit in the same chapter right after the implementation they cover (enforced mechanically, in both review and read mode)
 - Chapters and their files are listed in a sidebar, as a directory tree that looks like GitHub's PR file tree
 - Selecting a chapter shows its summary and what to look for
 - **The main pane is the real file buffer**, so `gd` / `gr` / hover work as usual — the main difference from a dedicated diff viewer
@@ -76,7 +77,7 @@ The real file buffer, so LSP navigation is unaffected. `<leader>gl` toggles unif
 
 ### Read mode
 
-`:StorylineRead` drops the diff and structures existing code around a topic — useful for onboarding onto an unfamiliar area. The AI scouts the repository and proposes topics; instructions like "only under `apps/api`", "exclude tests" or "just the resolvers" narrow the candidates before analysis.
+`:StorylineRead` drops the diff and structures existing code around a topic — useful for onboarding onto an unfamiliar area. Candidates are not a plain text-match dump: files whose path matches the topic act as seeds, and their `import` / `require` statements are traced statically in both directions — up to the entry points that call them and down to the core logic they depend on. Only files connected to that chain survive, ordered entry point → core logic, with tests placed right after the implementation they cover (colocation). The AI then proposes angles; instructions like "only under `apps/api`", "exclude tests" or "just the resolvers" narrow further — picking an angle keeps the files connected to it by imports, so the reading path stays intact.
 
 ## Configuration
 

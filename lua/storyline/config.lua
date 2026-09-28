@@ -8,6 +8,10 @@ M.defaults = {
     codex = { cmd = "codex", args = { "exec", "--sandbox", "read-only", "-" } },
     cursor = { cmd = "cursor-agent", args = { "-p" } },
   },
+  -- cursor バックエンド時に `--model` として渡す。nil なら CLI のデフォルト
+  model = nil,
+  -- :StorylineModel の選択肢 { id, name }
+  models = {},
   timeout_ms = 120000,
   -- プロンプトに含める diff の1ファイルあたり上限行数
   max_diff_lines_per_file = 400,

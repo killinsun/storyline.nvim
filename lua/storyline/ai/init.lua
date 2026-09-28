@@ -58,6 +58,47 @@ function M.pick_backend()
   end)
 end
 
+function M.get_model()
+  return config.options.model
+end
+
+function M.set_model(id)
+  config.options.model = id
+  vim.notify("Storyline: モデル = " .. id, vim.log.levels.INFO)
+end
+
+function M.pick_model()
+  local models = config.options.models or {}
+  if #models == 0 then
+    vim.notify("Storyline: models が設定されていません", vim.log.levels.WARN)
+    return
+  end
+  vim.ui.select(models, {
+    prompt = "Storyline モデル",
+    format_item = function(entry)
+      local mark = entry.id == config.options.model and " (現在)" or ""
+      return entry.name .. " (" .. entry.id .. ")" .. mark
+    end,
+  }, function(choice)
+    if choice then
+      M.set_model(choice.id)
+    end
+  end)
+end
+
+--- スピナー等に出す「(backend / model)」ラベル
+function M.display_suffix()
+  local backend = M.resolve_backend()
+  if not backend then
+    return ""
+  end
+  local model = config.options.model
+  if model and model ~= "" then
+    return " (" .. backend.name .. " / " .. model .. ")"
+  end
+  return " (" .. backend.name .. ")"
+end
+
 --- 出力テキストから JSON オブジェクトを取り出してデコード
 local function extract_json(text)
   if not text then
@@ -123,16 +164,19 @@ end
 
 --- diff を AI で解析してチャプター構成を作る（完全非同期）
 --- cb(story, err) はメインループで呼ばれる。story == nil ならエラー。
+--- ctx.leftover = false で割り当て漏れを「その他の変更」に戻さない（読むモードの組み替え用）
+--- ctx.trace はプロンプトの依存関係セクションとチャプター内の並び順に使う
 function M.analyze(ctx, cb)
   run_json(prompt.build(ctx), function(decoded)
-    return schema.validate(decoded, ctx.files)
+    return schema.validate(decoded, ctx.files, { leftover = ctx.leftover, trace = ctx.trace })
   end, cb)
 end
 
 --- 読むモード: トピックに沿ってチャプター構成を作る
+--- AI が外したファイルは「その他の変更」に戻さず、そのまま落とす（絞り込みを最終結果にする）
 function M.analyze_read(ctx, cb)
   run_json(prompt.build_read(ctx), function(decoded)
-    return schema.validate(decoded, ctx.files)
+    return schema.validate(decoded, ctx.files, { leftover = false, trace = ctx.trace })
   end, cb)
 end
 

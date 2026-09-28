@@ -29,6 +29,11 @@ meaningful chapters and then walks you through them in reading order.
 
 - The AI reads the diff and returns chapters: a title, a summary, review
   points, and the files that belong to that chapter.
+- A static import trace guides the story: chapters run from entry points
+  (upstream) down to the core logic they call, and test files always sit in
+  the same chapter, right after the implementation they cover (colocation).
+  This is enforced mechanically after the AI answers, in both review mode
+  and read mode.
 - Chapters and their files are listed in a sidebar, as a directory tree that
   looks like GitHub's PR file tree.
 - Selecting a chapter shows its summary and what to look for.
@@ -92,6 +97,11 @@ With lazy.nvim: >lua
 :StorylineBackend
     Switch the AI backend for this session. See |storyline-backends|.
 
+                                                             *:StorylineModel*
+:StorylineModel
+    Switch the AI model for this session (passed as `--model` to the cursor
+    backend). Entries come from |storyline-config-models|.
+
                                                              *:StorylineClose*
 :StorylineClose
     Close the review.
@@ -139,12 +149,20 @@ change count reaches |storyline-auto_split_lines| open in split automatically.
 |:StorylineRead| drops the diff entirely and structures existing code around a
 topic - useful for onboarding onto an unfamiliar area.
 
+Candidate files are narrowed by a static import trace, not by text match
+alone: files whose path matches the topic become seeds, their import /
+require statements are followed up to the entry points that call them and
+down to the core logic they depend on, and only files connected to that
+chain survive. The list is ordered entry point -> core logic, and tests sit
+right after the implementation they cover (colocation).
+
 Without an argument the flow is:
 
   1. The AI scouts the repository and proposes topics.
   2. You pick or refine one in a chat float. Instructions like "only under
      `apps/api`", "exclude tests" or "just the resolvers" narrow the candidate
-     files.
+     files. Picking a proposed angle keeps files connected to it by imports,
+     so the reading path from entry point to core logic stays intact.
   3. The AI groups the resulting files into chapters, same as a review.
 
 `v` (open chapter in diffview) is not available in read mode - there is no
@@ -173,6 +191,8 @@ Defaults: >lua
         codex = { cmd = "codex", args = { "exec", "--sandbox", "read-only", "-" } },
         cursor = { cmd = "cursor-agent", args = { "-p" } },
       },
+      model = nil,
+      models = {},
       timeout_ms = 120000,
       max_diff_lines_per_file = 400,
       sidebar_width = 36,
@@ -203,6 +223,16 @@ backend~
 backends~
     Command and arguments per backend. Override to add flags, pin a model, or
     point at a wrapper script. See |storyline-backends|.
+
+                                                           *storyline-model*
+model~
+    string or nil, default `nil`
+    Passed as `--model` to the cursor backend. `nil` uses the CLI default.
+
+                                                   *storyline-config-models*
+models~
+    list of `{ id, name }`, default `{}`
+    Entries for |:StorylineModel|.
 
                                                        *storyline-timeout_ms*
 timeout_ms~
@@ -302,9 +332,10 @@ The AI is any CLI that reads a prompt and prints text. Built-in entries:
 
     claude      `claude -p`
     codex       `codex exec --sandbox read-only -`
-    cursor      `cursor-agent -p`
+    cursor      `cursor-agent -p`  (`--model` is added when |storyline-model| is set)
 
-Switch at runtime with |:StorylineBackend|. If the analysis output cannot be
+Switch at runtime with |:StorylineBackend|. Pin a cursor model with
+|storyline-model| / |:StorylineModel|. If the analysis output cannot be
 parsed - or no CLI is available at all - the plugin falls back to grouping the
 changed files by top-level directory, so a review is always possible.
 

@@ -11,6 +11,31 @@ local function prompts_config()
   return config.options.prompts or {}
 end
 
+local ROLE_LABELS = { entry = "エントリポイント候補", test = "テスト" }
+
+--- ファイル一覧の行に依存トレースの役割注釈を付ける
+local function role_suffix(trace, path)
+  local label = trace and trace.roles and ROLE_LABELS[trace.roles[path]]
+  return label and ("（" .. label .. "）") or ""
+end
+
+--- 依存関係セクション（import する側 → される側）を parts に追記する
+local function append_trace_edges(parts, trace)
+  if not (trace and trace.edges and #trace.edges > 0) then
+    return
+  end
+  table.insert(parts, "# 依存関係（静的解析。import する側 → される側）")
+  local max_edges = 80
+  for i, edge in ipairs(trace.edges) do
+    if i > max_edges then
+      table.insert(parts, string.format("…（他 %d 件）", #trace.edges - max_edges))
+      break
+    end
+    table.insert(parts, string.format("- %s → %s", edge[1], edge[2]))
+  end
+  table.insert(parts, "")
+end
+
 --- ctx: {
 ---   files, stat, diff, pr?,
 ---   instruction?: string,          -- 組み替え指示（あれば優先して従う）
@@ -24,7 +49,10 @@ function M.build(ctx)
 
   local file_lines = {}
   for _, f in ipairs(ctx.files) do
-    table.insert(file_lines, string.format("- %s (%s, +%d -%d)", f.path, f.status, f.added, f.deleted))
+    table.insert(
+      file_lines,
+      string.format("- %s (%s, +%d -%d)%s", f.path, f.status, f.added, f.deleted, role_suffix(ctx.trace, f.path))
+    )
   end
 
   local intro = [[あなたはシニアエンジニアのコードレビューを支援する AI です。
@@ -56,7 +84,11 @@ function M.build(ctx)
 
 制約:
 - files には下記「変更ファイル一覧」のパスをそのまま使い、全ファイルをいずれか1つのチャプターに割り当てる
-- チャプターは「土台・前提 → 中心となる変更 → 周辺（テスト・設定・ドキュメント）」のように読み進めやすい順に並べる
+- チャプターは変更を上流から辿れる順に並べる:
+  「エントリポイント（上流）→ 呼び出される中核ロジック → 周辺（設定・ドキュメント）」。
+  「依存関係」セクションがあれば、その呼び出しの流れに沿わせる
+- テストコードは独立したチャプターにしない。対象の実装と同じチャプターに入れ、
+  実装ファイルの直後に並べる（コロケーション）
 - summary とチャプター名は日本語で書く]],
     "",
   }
@@ -84,6 +116,8 @@ function M.build(ctx)
     table.insert(parts, prompts.analyze_extra)
     table.insert(parts, "")
   end
+
+  append_trace_edges(parts, ctx.trace)
 
   if ctx.pr then
     table.insert(parts, "# PR タイトル")
@@ -157,7 +191,11 @@ function M.build_read_scout(ctx)
 end
 
 --- 読むモード: トピックに沿って読むべきファイルをチャプター化する
---- ctx: { topic = string, focus? = string, files = { {path, status, added, deleted} } }
+--- ctx: {
+---   topic = string, focus? = string,
+---   files = { {path, status, added, deleted} },
+---   trace? = { edges = { {from, to} }, roles = { [path] = "entry"|"core"|"test" } },
+--- }
 function M.build_read(ctx)
   local prompts = prompts_config()
   if prompts.build_read then
@@ -166,7 +204,7 @@ function M.build_read(ctx)
 
   local file_lines = {}
   for _, f in ipairs(ctx.files or {}) do
-    table.insert(file_lines, "- " .. f.path)
+    table.insert(file_lines, "- " .. f.path .. role_suffix(ctx.trace, f.path))
   end
 
   local parts = {
@@ -193,15 +231,23 @@ function M.build_read(ctx)
 - files には下記「候補ファイル一覧」のパスをそのまま使う（存在しないパスを作らない）
 - トピックに無関係なファイルは入れない
 - 「興味のある切り口」があればそれを最優先で絞り、無関係な別機能は入れない
-- チャプターは「入口・契約 → 中核ロジック → 周辺（テスト・設定）」のように読み進めやすい順
+- チャプターは「エントリポイント（上流）→ 呼び出される中核ロジック → 周辺」の順。
+  「依存関係」セクションがあれば、その呼び出しの流れに沿って上から辿れるように並べる
+- 依存関係で本筋と繋がらないファイルは外す
+- 実装ファイルを主役にする。テストコードは対象の実装とセットのときだけ入れ、
+  同じチャプターで実装ファイルの直後に並べる（コロケーション）。
+  テストだけのチャプターや、テストが過半を占める構成にしない
 - summary とチャプター名は日本語で書く
-- 候補が多すぎる場合は重要なものに絞る（目安: 全体で 8〜25 ファイル）
+- 読む価値の高いファイルだけに絞る（目安: 全体で 5〜15 ファイル、最大でも 20）。
+  候補を全部使う必要はまったくない。迷ったら外す。外したファイルは表示されない前提でよい
 - migration.sql / prisma migrations / lock ファイルは、トピックが明示的にマイグレーションでない限り入れない]],
     "",
     "# トピック",
     ctx.topic or "",
     "",
   }
+
+  append_trace_edges(parts, ctx.trace)
 
   if ctx.focus and ctx.focus ~= "" then
     table.insert(parts, "# 興味のある切り口")

@@ -291,60 +291,76 @@ local function is_read_noise(path)
   return false
 end
 
---- 読むモード用: トピックに関連しそうな候補パスを集める（実在する tracked ファイルのみ）
-function M.gather_read_candidates(topic, max_files)
-  max_files = max_files or 150
+--- import 抽出用にファイル先頭を読む
+local READ_LINES_CAP = 800
+
+function M.read_lines(path, cap)
   local root = M.repo_root()
   if not root then
+    return nil
+  end
+  local full = root .. "/" .. path
+  if vim.fn.filereadable(full) ~= 1 then
+    return nil
+  end
+  local ok, lines = pcall(vim.fn.readfile, full, "", cap or READ_LINES_CAP)
+  if not ok then
+    return nil
+  end
+  return lines
+end
+
+--- keys のいずれかを含むファイルを repo 全体から探す（逆参照＝import している側の候補）
+local function search_refs(root, keys)
+  if vim.fn.executable("rg") ~= 1 or #keys == 0 then
     return {}
   end
-
-  local seen, paths = {}, {}
-  local function add(p)
-    if not p or p == "" or seen[p] then
-      return
+  local args = { "rg", "-l", "-i", "-F" }
+  for i, key in ipairs(keys) do
+    if i > 20 then
+      break
     end
-    -- 絶対パスやリポジトリ外は捨てる
-    if p:sub(1, 1) == "/" then
-      return
-    end
-    if is_read_noise(p) then
-      return
-    end
-    seen[p] = true
-    table.insert(paths, p)
+    table.insert(args, "-e")
+    table.insert(args, key)
   end
-
-  local tokens = read_tokens(topic)
-  if #tokens == 0 and topic and topic ~= "" then
-    table.insert(tokens, topic)
+  for _, g in ipairs(RG_GLOBS) do
+    table.insert(args, "--glob")
+    table.insert(args, g)
   end
-
-  local all = run({ "git", "-C", root, "ls-files" }) or {}
-  for _, path in ipairs(all) do
-    local lower = path:lower()
-    for _, tok in ipairs(tokens) do
-      if lower:find(tok:lower(), 1, true) then
-        add(path)
-        break
-      end
+  local ok, proc = pcall(vim.system, args, { cwd = root, text = true })
+  if not ok then
+    return {}
+  end
+  local result = proc:wait()
+  if result.code ~= 0 and result.code ~= 1 then
+    return {}
+  end
+  local out = {}
+  for _, line in ipairs(vim.split(result.stdout or "", "\n", { plain = true })) do
+    if line ~= "" then
+      table.insert(out, line)
     end
-    if #paths >= max_files then
+    if #out >= 120 then
       break
     end
   end
+  return out
+end
 
-  if vim.fn.executable("rg") == 1 then
-    for _, tok in ipairs(tokens) do
-      if #paths >= max_files then
-        break
-      end
-      -- 短すぎる / 日本語だけの長い文全体は rg のノイズになりやすいので、
-      -- 英数字トークンか短めの語だけ本文検索する
-      local is_ascii = tok:match("^[%w_]+$") ~= nil
-      if not is_ascii and vim.fn.strchars(tok) > 16 then
-        goto continue
-      end
+--- 本文一致の候補を rg で集める（seed 以外の弱い候補）
+local function content_matches(root, tokens, skip, max_files)
+  if vim.fn.executable("rg") ~= 1 then
+    return {}
+  end
+  local seen, paths = {}, {}
+  for _, tok in ipairs(tokens) do
+    if #paths >= max_files then
+      break
+    end
+    -- 短すぎる / 日本語だけの長い文全体は rg のノイズになりやすいので、
+    -- 英数字トークンか短めの語だけ本文検索する
+    local is_ascii = tok:match("^[%w_]+$") ~= nil
+    if is_ascii or vim.fn.strchars(tok) <= 16 then
       local args = { "rg", "-l", "-i", "-F", tok }
       for _, g in ipairs(RG_GLOBS) do
         table.insert(args, "--glob")
@@ -355,38 +371,150 @@ function M.gather_read_candidates(topic, max_files)
         local result = proc:wait()
         if result.code == 0 or result.code == 1 then
           for _, line in ipairs(vim.split(result.stdout or "", "\n", { plain = true })) do
-            add(line)
+            if line ~= "" and not seen[line] and not skip[line] and not is_read_noise(line) then
+              seen[line] = true
+              table.insert(paths, line)
+            end
             if #paths >= max_files then
               break
             end
           end
         end
       end
-      ::continue::
+    end
+  end
+  return paths
+end
+
+--- 読むモード用: トピックに関連しそうな候補パスを集める（実在する tracked ファイルのみ）
+--- パス一致した seed から import を上下（エントリポイント側・コアロジック側）に辿り、
+--- 依存で繋がるファイルだけを「上流 → コア」の順で返す。
+function M.gather_read_candidates(topic, max_files)
+  max_files = max_files or 80
+  local root = M.repo_root()
+  if not root then
+    return {}
+  end
+
+  local trace = require("storyline.trace")
+
+  local tokens = read_tokens(topic)
+  if #tokens == 0 and topic and topic ~= "" then
+    table.insert(tokens, topic)
+  end
+
+  -- tracked + 未コミット（ignore されていないもの）を候補にする
+  local all = run({ "git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard" }) or {}
+
+  -- パス一致 = seed（強い候補）
+  local seeds, seed_set = {}, {}
+  for _, path in ipairs(all) do
+    if path:sub(1, 1) ~= "/" and not is_read_noise(path) then
+      local lower = path:lower()
+      for _, tok in ipairs(tokens) do
+        if lower:find(tok:lower(), 1, true) then
+          seed_set[path] = true
+          table.insert(seeds, path)
+          break
+        end
+      end
     end
   end
 
-  -- まだ少ないときは tracked ファイルからソースっぽいものを足す（AI が選べるように）
-  if #paths < 20 then
+  -- seed が多すぎるときは実装優先・短いパス優先で刈る（トレースの起点として十分な数）
+  if #seeds > 40 then
+    table.sort(seeds, function(a, b)
+      local ta, tb = trace.is_test_path(a), trace.is_test_path(b)
+      if ta ~= tb then
+        return not ta
+      end
+      if #a ~= #b then
+        return #a < #b
+      end
+      return a < b
+    end)
+    for i = #seeds, 41, -1 do
+      seeds[i] = nil
+    end
+  end
+
+  local content = content_matches(root, tokens, seed_set, max_files)
+
+  if #seeds > 0 then
+    local result = trace.trace({
+      seeds = seeds,
+      candidates = content,
+      all_paths = all,
+      read_lines = function(path)
+        return M.read_lines(path)
+      end,
+      search_refs = function(keys)
+        return search_refs(root, keys)
+      end,
+      is_noise = is_read_noise,
+      max_files = max_files,
+    })
+    if #result.paths > 0 then
+      return result.paths
+    end
+  end
+
+  -- seed が無い（トピックがパスに現れない）ときは本文一致で返す。
+  -- 本文一致はテストに偏りやすい（テストは仕様の文言を多く含む）ので実装を優先し、
+  -- テストは実装がひとつも見つからないときだけ返す
+  local impl, tests = {}, {}
+  for _, path in ipairs(content) do
+    if trace.is_test_path(path) then
+      table.insert(tests, path)
+    else
+      table.insert(impl, path)
+    end
+  end
+  local paths = #impl > 0 and impl or tests
+  if #paths < 10 then
+    local seen = {}
+    for _, p in ipairs(paths) do
+      seen[p] = true
+    end
     for _, path in ipairs(all) do
       if
-        path:match("%.[tj]sx?$")
-        or path:match("%.lua$")
-        or path:match("%.py$")
-        or path:match("%.go$")
-        or path:match("%.graphql$")
-        or path:match("%.gql$")
+        not seen[path]
+        and not is_read_noise(path)
+        and not trace.is_test_path(path)
+        and (
+          path:match("%.[tj]sx?$")
+          or path:match("%.lua$")
+          or path:match("%.py$")
+          or path:match("%.go$")
+          or path:match("%.graphql$")
+          or path:match("%.gql$")
+        )
       then
-        add(path)
+        seen[path] = true
+        table.insert(paths, path)
       end
-      if #paths >= math.min(80, max_files) then
+      if #paths >= 40 then
         break
       end
     end
   end
-
   table.sort(paths)
   return paths
+end
+
+--- 切り口で選んだファイル群と import で繋がる上流・下流だけを候補から残す
+function M.chain_read_candidates(paths, picked)
+  if not picked or #picked == 0 then
+    return paths
+  end
+  local trace = require("storyline.trace")
+  local out = trace.chain(paths, function(path)
+    return M.read_lines(path)
+  end, picked)
+  if #out == 0 then
+    return picked
+  end
+  return out
 end
 
 local REFINE_STOP = {

@@ -135,13 +135,26 @@ end
 
 local function run_analyze(ctx, opts)
   opts = opts or {}
+
+  -- 変更ファイルに依存トレースを注釈する
+  -- （プロンプトの依存関係セクション、テストのコロケーション、チャプター内の並び順に使う）
+  local git = require("storyline.git")
+  local trace = require("storyline.trace")
+  local trace_paths = {}
+  for _, f in ipairs(ctx.files) do
+    table.insert(trace_paths, f.path)
+  end
+  ctx.trace = trace.annotate(trace_paths, function(path)
+    return git.read_lines(path)
+  end)
+
   local cache = require("storyline.cache")
   local key = cache.key({ ctx.repo_root, ctx.from_rev, ctx.head_sha, ctx.files_hash })
 
   if not opts.no_cache then
     local cached = cache.get(key)
     if cached and cached.chapters then
-      local reconciled = require("storyline.ai.schema").validate(cached, ctx.files)
+      local reconciled = require("storyline.ai.schema").validate(cached, ctx.files, { trace = ctx.trace })
       if reconciled then
         open_ui(ctx, reconciled)
         return
@@ -151,8 +164,7 @@ local function run_analyze(ctx, opts)
 
   local ai = require("storyline.ai")
   local spinner = require("storyline.ui.spinner")
-  local backend = ai.resolve_backend()
-  spinner.start("Storyline: AI が変更を解析中..." .. (backend and (" (" .. backend.name .. ")") or ""))
+  spinner.start("Storyline: AI が変更を解析中..." .. ai.display_suffix())
 
   ai.analyze(ctx, function(result, err)
     spinner.stop()
@@ -287,6 +299,12 @@ function M.reorganize(instruction)
     pr = git.pr_info(),
     instruction = instruction,
     current_chapters = current_chapters,
+    -- 読むモードでは AI が外したファイルを「その他の変更」に戻さない
+    leftover = s.mode ~= "read",
+    -- 組み替えでも上流順とテストのコロケーションを徹底する
+    trace = require("storyline.trace").annotate(paths, function(path)
+      return git.read_lines(path)
+    end),
   }
 
   local cache = require("storyline.cache")
@@ -296,8 +314,7 @@ function M.reorganize(instruction)
   local spinner = require("storyline.ui.spinner")
   local sidebar = require("storyline.ui.sidebar")
   local summary = require("storyline.ui.summary")
-  local backend = ai.resolve_backend()
-  local label = vim.fn.strcharpart(instruction, 0, 20) .. (backend and (" (" .. backend.name .. ")") or "")
+  local label = vim.fn.strcharpart(instruction, 0, 20) .. ai.display_suffix()
   spinner.start("Storyline 組み替え: " .. label)
 
   ai.analyze(ctx, function(result, err)
@@ -322,6 +339,14 @@ end
 
 local function start_read_analyze(topic, paths, focus)
   local git = require("storyline.git")
+  local trace = require("storyline.trace")
+
+  -- 確定した候補に import 関係を注釈し、並びも「上流 → コア」に揃える
+  local annotated = trace.annotate(paths, function(path)
+    return git.read_lines(path)
+  end)
+  paths = annotated.paths
+
   local files = {}
   for _, path in ipairs(paths) do
     table.insert(files, { path = path, status = "M", added = 0, deleted = 0 })
@@ -348,11 +373,10 @@ local function start_read_analyze(topic, paths, focus)
 
   local ai = require("storyline.ai")
   local spinner = require("storyline.ui.spinner")
-  local backend = ai.resolve_backend()
-  local label = vim.fn.strcharpart(label_topic, 0, 28) .. (backend and (" (" .. backend.name .. ")") or "")
+  local label = vim.fn.strcharpart(label_topic, 0, 28) .. ai.display_suffix()
   spinner.start("Storyline 読む: " .. label)
 
-  ai.analyze_read({ topic = topic, focus = focus, files = files }, function(result, err)
+  ai.analyze_read({ topic = topic, focus = focus, files = files, trace = annotated }, function(result, err)
     spinner.stop()
     if not result then
       vim.notify("Storyline: 読むモードの解析に失敗しました — " .. (err or ""), vim.log.levels.WARN)
@@ -467,11 +491,13 @@ local function refine_read_loop(topic, paths)
       local opt = match_scout_option(instr, options)
       if opt then
         focus = opt.label
-        paths = filter_paths_by_option(paths, opt)
+        -- キーワード一致に加え、import で繋がる上流・下流を残して読み筋を切らさない
+        local matched = filter_paths_by_option(paths, opt)
+        paths = git.chain_read_candidates(paths, matched)
         chat.append(
           "bot",
           string.format(
-            "「%s」で進めます。空 Enter で解析開始。追記でさらに絞り込みもできます（例: test 除外）。\n%s",
+            "「%s」で進めます（import で繋がる上流・下流も残しています）。空 Enter で解析開始。追記でさらに絞り込みもできます（例: test 除外）。\n%s",
             opt.label,
             preview_paths(paths)
           )

@@ -256,9 +256,8 @@ local function ask_chapter()
       question = question,
     })
 
-    local backend = ai.resolve_backend()
     -- 多バイト文字の途中で切らないよう文字数単位で丸める
-    local label = vim.fn.strcharpart(question, 0, 20) .. (backend and (" (" .. backend.label .. ")") or "")
+    local label = vim.fn.strcharpart(question, 0, 20) .. ai.display_suffix()
     spinner.start(label)
     ai.ask(payload, function(text, err)
       spinner.stop()

@@ -35,3 +35,7 @@ end, { desc = "ストーリーモードレビューを閉じる" })
 vim.api.nvim_create_user_command("StorylineBackend", function()
   require("storyline.ai").pick_backend()
 end, { desc = "AI バックエンドを切り替える" })
+
+vim.api.nvim_create_user_command("StorylineModel", function()
+  require("storyline.ai").pick_model()
+end, { desc = "AI モデルを切り替える" })
